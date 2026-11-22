@@ -23,6 +23,8 @@ Things to know:
   computer, a user and a password. coffret boots the installer's kernel with libosinfo's answers
   in its initrd and boots the disk once the installer is done; for now this works for media whose
   answers go into the initrd, such as Debian's.
+- A Windows machine gets a SATA disk and an Intel e1000e card, which Windows drives without
+  extra drivers, a TPM, the firmware that can do secure boot, and no 3D acceleration.
 - A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes
   in the guest, the files belong to the user on the host; in the guest they belong to its first
   user (id 1000).

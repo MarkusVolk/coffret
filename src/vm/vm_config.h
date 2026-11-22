@@ -43,6 +43,8 @@ namespace coffret {
     // Empty for one libvirt makes up.
     std::string mac;
     std::vector<PortForward> forwards;
+    // The card the guest sees: virtio, or e1000e for a system without virtio drivers, as Windows.
+    std::string model = "virtio";
     bool operator==(const Nic&) const = default;
   };
 

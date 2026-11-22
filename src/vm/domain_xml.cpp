@@ -366,7 +366,7 @@ namespace {
       if (backend) {
         setAttribute(backend, "type", "passt");
       }
-      setAttribute(ensure(node, "model"), "type", "virtio");
+      setAttribute(ensure(node, "model"), "type", nic.model.empty() ? "virtio" : nic.model);
       xml_node mac = present(node, "mac", !nic.mac.empty() || node.child("mac"));
       if (mac && !nic.mac.empty()) {
         setAttribute(mac, "address", nic.mac);
@@ -737,6 +737,7 @@ std::expected<coffret::VmConfig, std::string> coffret::readDomainXml(std::string
     Nic nic;
     nic.kind = std::string_view(node.attribute("type").value()) == "bridge" ? NetworkKind::Bridge : NetworkKind::User;
     nic.bridge = node.child("source").attribute("bridge").value();
+    nic.model = node.child("model").attribute("type").as_string("virtio");
     nic.mac = node.child("mac").attribute("address").value();
     for (xml_node forward : node.children("portForward")) {
       const bool udp = std::string_view(forward.attribute("proto").value()) == "udp";

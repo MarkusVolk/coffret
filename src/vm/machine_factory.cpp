@@ -139,9 +139,10 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   config.nvramTemplate = firmware->variables;
   config.nvramPath = (folder / "vars.qcow2").string();
   // An empty disk does not boot: the firmware goes on to the medium, and to the disk once the system is on it.
-  config.disks.push_back({.path = disk.string(), .bootOrder = 1});
+  // Windows has no virtio drivers of its own: a SATA disk and an Intel card it knows.
+  config.disks.push_back({.path = disk.string(), .bus = windows ? DiskBus::Sata : DiskBus::Virtio, .bootOrder = 1});
   config.disks.push_back({.path = iso.string(), .format = "raw", .bus = DiskBus::Sata, .cdrom = true, .readOnly = true, .bootOrder = 2});
-  config.nics.emplace_back();
+  config.nics.emplace_back().model = windows ? "e1000e" : "virtio";
   config.renderNode = defaultRenderNode();
   // Windows has no driver for it out of the box.
   config.accel3d = !config.renderNode.empty() && request.kind != GuestKind::Windows;
