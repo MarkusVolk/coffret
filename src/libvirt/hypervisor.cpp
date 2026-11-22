@@ -90,7 +90,8 @@ struct coffret::Hypervisor::Core {
 
   static void closed(virConnectPtr, int reason, void* data) {
     auto* events = static_cast<Events*>(data);
-    runOnMain([alive = events->alive, self = events->self, reason] {
+    // Later, not now: lost() unregisters this callback, which waits for libvirt's lock held around this call.
+    runLater([alive = events->alive, self = events->self, reason] {
       if (!alive.expired()) {
         self->lost(reason == VIR_CONNECT_CLOSE_REASON_CLIENT ? "" : "The connection to libvirt was lost.");
       }
