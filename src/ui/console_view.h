@@ -57,6 +57,9 @@ namespace coffret {
 
     // Whether the window shows the console right now; a hidden one takes no input and asks for no frames.
     void setActive(bool active);
+    // The guest follows the window without having defined a pointer: Windows with viogpu3d draws
+    // its pointer itself and is never a text console that would turn its picture off.
+    void setFollowsWithoutPointer(bool follows) { m_followsWithoutPointer = follows; }
     // The node's size changed: the guest follows, once it has settled.
     void sizeChanged();
     void requestSize(std::uint32_t width, std::uint32_t height);
@@ -104,6 +107,7 @@ namespace coffret {
     // over. A text console has no pointer and cannot change its size: it turns its picture off
     // when asked. Only a guest that defined a pointer since, a desktop, follows the window.
     std::uint64_t m_cursorBefore = 0;
+    bool m_followsWithoutPointer = false;
     Timer m_resizeTimer;
     Timer m_statusTimer;
     std::uint64_t m_framesAtLastStatus = 0;

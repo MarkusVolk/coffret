@@ -189,7 +189,7 @@ void coffret::ConsoleView::requestGuestSize() {
     return;
   }
   const GuestCursor cursor = m_frames->cursor();
-  if (cursor.serial == m_cursorBefore || cursor.width == 0) {
+  if (!m_followsWithoutPointer && (cursor.serial == m_cursorBefore || cursor.width == 0)) {
     return;
   }
   const float scale = m_host.surface.effectiveBufferScale();
@@ -205,6 +205,8 @@ void coffret::ConsoleView::guestShows(std::uint32_t width, std::uint32_t height)
   if (width == 0 || height == 0) {
     // The guest starts over, a reboot perhaps: what comes next may be a text console again.
     m_cursorBefore = m_frames->cursor().serial;
+    // And whatever comes next has to be told the size anew.
+    m_askedWidth = m_askedHeight = 0;
   }
 }
 
