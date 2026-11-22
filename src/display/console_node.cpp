@@ -36,14 +36,17 @@ void main() {
 }
 )";
 
-  // A guest's picture has no transparency; the X of XRGB is whatever the guest left there.
+  // A guest's picture has no transparency; the X of XRGB is whatever the guest left there. Its
+  // cursor has, premultiplied.
   constexpr char kFragmentShader[] = R"(
 precision mediump float;
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform float u_alpha;
 varying vec2 v_uv;
 void main() {
-    gl_FragColor = vec4(texture2D(u_texture, v_uv).rgb * u_opacity, u_opacity);
+    vec4 color = texture2D(u_texture, v_uv);
+    gl_FragColor = mix(vec4(color.rgb, 1.0), color, u_alpha) * u_opacity;
 }
 )";
 
@@ -77,6 +80,7 @@ void main() {
       m_transform = glGetUniformLocation(m_program.id(), "u_transform");
       m_uv = glGetUniformLocation(m_program.id(), "u_uv");
       m_opacity = glGetUniformLocation(m_program.id(), "u_opacity");
+      m_alpha = glGetUniformLocation(m_program.id(), "u_alpha");
       m_createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
       m_destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
       m_imageTarget =
@@ -87,12 +91,17 @@ void main() {
       for (auto& [id, slot] : m_slots) {
         free(slot);
       }
+      for (auto& [id, slot] : m_cursors) {
+        free(slot);
+      }
       m_slots.clear();
+      m_cursors.clear();
       m_program.destroy();
     }
 
     void abandon() noexcept override {
       m_slots.clear();
+      m_cursors.clear();
       m_program.abandon();
     }
 
@@ -106,6 +115,10 @@ void main() {
         if (const auto it = m_slots.find(gone); it != m_slots.end()) {
           free(it->second);
           m_slots.erase(it);
+        }
+        if (const auto it = m_cursors.find(gone); it != m_cursors.end()) {
+          free(it->second);
+          m_cursors.erase(it);
         }
       }
       return m_slots[id];
@@ -231,8 +244,53 @@ void main() {
       glDeleteFramebuffers(1, &framebuffer);
     }
 
+    // The guest's cursor over its picture, where the guest has it.
+    void drawCursor(std::uint64_t id, const coffret::GuestCursor& cursor, const CustomDrawContext& context, const coffret::Placement& picture, float guestWidth, float guestHeight) {
+      if (!cursor.visible || !cursor.pixels || cursor.width <= 0 || cursor.height <= 0 || guestWidth <= 0 || guestHeight <= 0) {
+        return;
+      }
+      Slot& slot = m_cursors[id];
+      if (slot.texture == 0 || slot.serial != cursor.serial) {
+        if (slot.texture == 0) {
+          glGenTextures(1, &slot.texture);
+        }
+        glBindTexture(GL_TEXTURE_2D, slot.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, cursor.width, cursor.height, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, cursor.pixels->data());
+        slot.serial = cursor.serial;
+        slot.filter = 0;
+        slot.usable = true;
+      }
+      const float scaleX = picture.width / guestWidth, scaleY = picture.height / guestHeight;
+      coffret::Placement placement;
+      placement.x = picture.x + static_cast<float>(cursor.x) * scaleX;
+      placement.y = picture.y + static_cast<float>(cursor.y) * scaleY;
+      placement.width = static_cast<float>(cursor.width) * scaleX;
+      placement.height = static_cast<float>(cursor.height) * scaleY;
+      placement.exact = picture.exact;
+      const GLboolean blending = glIsEnabled(GL_BLEND);
+      GLint sourceRgb = 0, destinationRgb = 0, sourceAlpha = 0, destinationAlpha = 0;
+      glGetIntegerv(GL_BLEND_SRC_RGB, &sourceRgb);
+      glGetIntegerv(GL_BLEND_DST_RGB, &destinationRgb);
+      glGetIntegerv(GL_BLEND_SRC_ALPHA, &sourceAlpha);
+      glGetIntegerv(GL_BLEND_DST_ALPHA, &destinationAlpha);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+      drawSlot(slot, context, placement, {0.0F, 0.0F, 1.0F, 1.0F}, 1.0F);
+      glBlendFuncSeparate(
+          static_cast<GLenum>(sourceRgb), static_cast<GLenum>(destinationRgb), static_cast<GLenum>(sourceAlpha),
+          static_cast<GLenum>(destinationAlpha)
+      );
+      if (!blending) {
+        glDisable(GL_BLEND);
+      }
+    }
+
     void drawSlot(
-        Slot& slot, const CustomDrawContext& context, const coffret::Placement& placement, const std::array<float, 4>& uv
+        Slot& slot, const CustomDrawContext& context, const coffret::Placement& placement, const std::array<float, 4>& uv,
+        float alpha = 0.0F
     ) {
       if (!slot.usable || !m_program.isValid()) {
         return;
@@ -248,6 +306,7 @@ void main() {
       glUniformMatrix3fv(m_transform, 1, GL_FALSE, transform.m.data());
       glUniform4f(m_uv, uv[0], uv[1], uv[2], uv[3]);
       glUniform1f(m_opacity, context.opacity);
+      glUniform1f(m_alpha, alpha);
       const auto position = static_cast<GLuint>(m_position);
       glVertexAttribPointer(position, 2, GL_FLOAT, GL_FALSE, 0, kQuad.data());
       glEnableVertexAttribArray(position);
@@ -278,7 +337,8 @@ void main() {
     }
 
     ShaderProgram m_program;
-    GLint m_position = -1, m_surfaceSize = -1, m_quadSize = -1, m_transform = -1, m_uv = -1, m_opacity = -1;
+    GLint m_position = -1, m_surfaceSize = -1, m_quadSize = -1, m_transform = -1, m_uv = -1, m_opacity = -1, m_alpha = -1;
+    std::unordered_map<std::uint64_t, Slot> m_cursors;
     PFNEGLCREATEIMAGEKHRPROC m_createImage = nullptr;
     PFNEGLDESTROYIMAGEKHRPROC m_destroyImage = nullptr;
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC m_imageTarget = nullptr;
@@ -363,5 +423,9 @@ void coffret::ConsoleNode::draw(RenderBackend& backend, const CustomDrawContext&
   m_stats.width = scanout.width;
   m_stats.height = scanout.height;
   const float scale = std::max(context.pixelScaleX, 0.01F);
-  program.drawSlot(slot, context, placeFrame(context.width, context.height, scale, scanout.width, scanout.height), uv);
+  const Placement picture = placeFrame(context.width, context.height, scale, scanout.width, scanout.height);
+  program.drawSlot(slot, context, picture, uv);
+  if (m_drawCursor) {
+    program.drawCursor(m_id, m_frames->cursor(), context, picture, static_cast<float>(scanout.width), static_cast<float>(scanout.height));
+  }
 }

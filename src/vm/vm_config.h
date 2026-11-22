@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace coffret {
@@ -93,6 +95,8 @@ namespace coffret {
     // The GPU to render on, e.g. "/dev/dri/renderD129"; required with accel3d.
     std::string renderNode;
     bool sound = true;
+    // The guest hears the host's microphone; off unless asked for.
+    bool microphone = false;
     // Copy and paste between host and guest, for guests that run spice-vdagent.
     bool clipboard = true;
     bool guestAgent = true;
@@ -103,6 +107,11 @@ namespace coffret {
 
     bool operator==(const VmConfig&) const = default;
   };
+
+  // Port forwards as text, "tcp:2222:22, udp:5353:53" (protocol, the host's port, the guest's), and
+  // back; nullopt for text that is not that.
+  std::string formatPortForwards(const std::vector<PortForward>& forwards);
+  std::optional<std::vector<PortForward>> parsePortForwards(std::string_view text);
 
   const char* toString(GuestKind kind);
   const char* toString(DiskBus bus);

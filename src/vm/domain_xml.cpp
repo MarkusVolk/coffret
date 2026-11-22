@@ -535,6 +535,10 @@ namespace {
       setAttribute(sound, "model", "ich9");
     }
     setAttribute(ensure(sound, "audio"), "id", "1");
+    // A sound card that only plays has no way to listen.
+    while (sound.remove_child("codec")) {
+    }
+    setAttribute(sound.append_child("codec"), "type", config.microphone ? "duplex" : "output");
   }
 
   void applyChannels(xml_node devices, const coffret::VmConfig& config) {
@@ -758,7 +762,60 @@ std::expected<coffret::VmConfig, std::string> coffret::readDomainXml(std::string
     }
   }
   config.sound = static_cast<bool>(devices.child("sound"));
+  // Without a codec named, libvirt gives the card one that plays and records.
+  config.microphone = false;
+  if (const xml_node sound = devices.child("sound")) {
+    config.microphone = !sound.child("codec");
+    for (xml_node codec : sound.children("codec")) {
+      const std::string_view type = codec.attribute("type").value();
+      config.microphone = config.microphone || type == "duplex" || type == "micro";
+    }
+  }
   config.clipboard = static_cast<bool>(channel(devices, kVdagentChannel));
   config.guestAgent = static_cast<bool>(channel(devices, kAgentChannel));
   return config;
+}
+
+std::string coffret::formatPortForwards(const std::vector<PortForward>& forwards) {
+  std::string text;
+  for (const auto& forward : forwards) {
+    text += std::format("{}{}:{}:{}", text.empty() ? "" : ", ", forward.udp ? "udp" : "tcp", forward.hostPort, forward.guestPort);
+  }
+  return text;
+}
+
+std::optional<std::vector<coffret::PortForward>> coffret::parsePortForwards(std::string_view text) {
+  std::vector<PortForward> forwards;
+  const auto port = [](std::string_view part) -> std::optional<std::uint16_t> {
+    unsigned value = 0;
+    const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+    return error == std::errc() && end == part.data() + part.size() && value >= 1 && value <= 65535
+               ? std::optional(static_cast<std::uint16_t>(value))
+               : std::nullopt;
+  };
+  while (!text.empty()) {
+    const auto comma = text.find(',');
+    std::string_view item = text.substr(0, comma);
+    text = comma == std::string_view::npos ? std::string_view() : text.substr(comma + 1);
+    while (!item.empty() && item.front() == ' ') {
+      item.remove_prefix(1);
+    }
+    while (!item.empty() && item.back() == ' ') {
+      item.remove_suffix(1);
+    }
+    if (item.empty()) {
+      continue;
+    }
+    const auto first = item.find(':'), second = item.find(':', first == std::string_view::npos ? first : first + 1);
+    if (first == std::string_view::npos || second == std::string_view::npos) {
+      return std::nullopt;
+    }
+    const std::string_view protocol = item.substr(0, first);
+    const auto host = port(item.substr(first + 1, second - first - 1)), guest = port(item.substr(second + 1));
+    if ((protocol != "tcp" && protocol != "udp") || !host || !guest) {
+      return std::nullopt;
+    }
+    forwards.push_back({protocol == "udp", *host, *guest});
+  }
+  return forwards;
 }

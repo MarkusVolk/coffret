@@ -4,6 +4,7 @@
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
+#include "display/console_node.h"
 #include "input/input_grab.h"
 #include "osinfo/install_media.h"
 #include "platform/file_portal.h"
@@ -33,6 +34,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unistd.h>
+#include <wayland-client.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 namespace {
@@ -238,6 +240,17 @@ void coffret::MainWindow::openTab(const std::string& uuid) {
             .surface = m_surface,
             .grab = m_services.grab,
             .changed = [this] { requestUpdate(); },
+            .hostCursor =
+                [this](bool hidden, std::uint32_t serial) {
+                  if (hidden) {
+                    if (wl_pointer* pointer = m_services.connection.pointer()) {
+                      wl_pointer_set_cursor(pointer, serial, nullptr, 0, 0);
+                    }
+                  } else {
+                    // The toolkit believes its arrow is still up.
+                    m_services.connection.extension<DesktopIntegration>().setCursorShape(serial, 1);
+                  }
+                },
             .guestCopied =
                 [this](std::string text) {
                   m_hostClipboard = text;
@@ -652,6 +665,10 @@ std::string coffret::MainWindow::describe() const {
         tab->console->attached() ? tab->console->describe() : "not attached",
         tab->displayProblem.empty() ? "" : " problem: " + tab->displayProblem
     );
+    if (const ConsoleNode* node = tab->console->node()) {
+      const GuestCursor cursor = node->guestCursor();
+      text += std::format("  guest cursor: {}x{} at {},{} {}\n", cursor.width, cursor.height, cursor.x, cursor.y, cursor.visible ? "shown" : "hidden");
+    }
   }
   if (!m_message.empty()) {
     text += std::format("message: {}\n", m_message);
@@ -758,6 +775,14 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       config.accel3d = value == "on";
     } else if (key == "sound") {
       config.sound = value == "on";
+    } else if (key == "microphone") {
+      config.microphone = value == "on";
+    } else if (key == "forward") {
+      // "forward=tcp:2222:22,udp:5353:53" for the first network card; "forward=" forwards nothing.
+      if (config.nics.empty()) {
+        return false;
+      }
+      config.nics[0].forwards = parsePortForwards(value).value_or(std::vector<PortForward>());
     } else if (key == "share") {
       // "share=/path:tag"; "share=" shares nothing.
       config.folders.clear();

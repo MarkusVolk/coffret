@@ -151,6 +151,17 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
       })
   ));
   page->addChild(field(
+      "Microphone",
+      ui::toggle({
+          .out = &m_microphone,
+          .onChange =
+              [this, edited](bool on) {
+                m_edit.microphone = on;
+                edited();
+              },
+      })
+  ));
+  page->addChild(field(
       "Shared clipboard",
       ui::toggle({
           .out = &m_clipboard,
@@ -180,6 +191,23 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
               },
       })
   ));
+  page->addChild(field(
+      "Port forwards",
+      ui::input({
+          .out = &m_forwards,
+          .placeholder = "tcp:2222:22, udp:5353:53  (protocol : port here : port in the guest)",
+          .flexGrow = 1.0F,
+          .onChange =
+              [this, edited](const std::string& value) {
+                // What cannot be read yet leaves the settings as they are.
+                if (auto forwards = parsePortForwards(value); forwards && !m_edit.nics.empty()) {
+                  m_edit.nics.front().forwards = std::move(*forwards);
+                }
+                edited();
+              },
+      })
+  ));
+  page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_forwardsNote)));
   page->addChild(ui::column({.out = &m_folderRows, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   page->addChild(field(
       "Shared folder",
@@ -382,7 +410,9 @@ void coffret::MachinePage::fill() {
   m_cpus->setValue(static_cast<int>(m_edit.cpus));
   m_accel->setCheckedImmediate(m_edit.accel3d);
   m_sound->setCheckedImmediate(m_edit.sound);
+  m_microphone->setCheckedImmediate(m_edit.microphone);
   m_clipboard->setCheckedImmediate(m_edit.clipboard);
+  m_forwards->setValue(m_edit.nics.empty() ? "" : formatPortForwards(m_edit.nics.front().forwards));
   const Disk* drive = cdromOf(m_edit);
   m_cdrom->setValue(drive ? drive->path : "");
 }
@@ -495,6 +525,13 @@ void coffret::MachinePage::sync() {
     rebuildFolders();
   }
   const bool active = isActive(m_machine.state);
+  m_microphone->setEnabled(m_edit.sound);
+  const bool nat = !m_edit.nics.empty() && m_edit.nics.front().kind == NetworkKind::User;
+  m_forwardsNote->setText(
+      !nat                                         ? "Ports are forwarded for a machine behind NAT."
+      : !parsePortForwards(m_forwards->value())    ? "Not readable yet: protocol, the port on this computer, the port in the guest."
+                                                   : "Connections to these ports of this computer reach the guest."
+  );
   const bool dirty = m_edit != m_machine.config;
   m_apply->setEnabled(dirty);
   m_applyNote->setText(dirty && active ? "Takes effect when the machine is started the next time." : "");

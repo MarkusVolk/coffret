@@ -54,6 +54,7 @@ int main() {
   CHECK(has(xml, "<target dev=\"sda\" bus=\"sata\""));
   CHECK(has(xml, "Test &lt;machine&gt; &amp; more"));
   CHECK(!has(xml, "<tpm"));
+  CHECK(has(xml, "<codec type=\"output\""));
   CHECK(!has(xml, "qemu:override"));
   CHECK(!has(xml, "<hyperv"));
 
@@ -187,6 +188,14 @@ int main() {
   const auto picked = coffret::updateDomainXml(namedXml, config, environment);
   CHECK(picked.has_value() && has(*picked, "<os firmware=\"efi\">") && !has(*picked, "<loader"));
 
+  // The microphone is asked for; a sound card libvirt set up by itself has one.
+  auto listening = config;
+  listening.microphone = true;
+  const std::string listeningXml = coffret::buildDomainXml(listening, environment);
+  CHECK(has(listeningXml, "<codec type=\"duplex\"") && !has(listeningXml, "type=\"output\""));
+  CHECK((*coffret::readDomainXml(listeningXml) == listening));
+  CHECK(coffret::readDomainXml("<domain><devices><sound model='ich9'/></devices></domain>")->microphone);
+
   // BIOS has neither firmware features nor variables.
   auto bios = config;
   bios.firmware = coffret::Firmware::Bios;
@@ -202,6 +211,16 @@ int main() {
   CHECK(has(bridgedXml, "<interface type=\"bridge\">") && has(bridgedXml, "<source bridge=\"br0\""));
   CHECK(!has(bridgedXml, "type=\"passt\"") && !has(bridgedXml, "portForward"));
   CHECK((*coffret::readDomainXml(bridgedXml) == bridged));
+
+  const auto forwards = coffret::parsePortForwards(" tcp:2222:22 ,udp:5353:53,");
+  CHECK(forwards.has_value() && forwards->size() == 2);
+  CHECK(((*forwards)[1] == coffret::PortForward{true, 5353, 53}));
+  CHECK(coffret::formatPortForwards(*forwards) == "tcp:2222:22, udp:5353:53");
+  CHECK(coffret::parsePortForwards("")->empty());
+  CHECK(!coffret::parsePortForwards("2222:22").has_value());
+  CHECK(!coffret::parsePortForwards("tcp:0:22").has_value());
+  CHECK(!coffret::parsePortForwards("tcp:70000:22").has_value());
+  CHECK(!coffret::parsePortForwards("icmp:1:1").has_value());
 
   CHECK(!coffret::readDomainXml("<network/>").has_value());
   CHECK(!coffret::readDomainXml("not xml <").has_value());

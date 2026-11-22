@@ -66,8 +66,11 @@ namespace coffret {
     Stepper* m_cpus = nullptr;
     Toggle* m_accel = nullptr;
     Toggle* m_sound = nullptr;
+    Toggle* m_microphone = nullptr;
     Toggle* m_clipboard = nullptr;
     Input* m_cdrom = nullptr;
+    Input* m_forwards = nullptr;
+    Label* m_forwardsNote = nullptr;
     Flex* m_facts = nullptr;
     Button* m_apply = nullptr;
     Label* m_applyNote = nullptr;

@@ -31,6 +31,15 @@ namespace coffret {
     };
     Stats stats() const { return m_stats; }
 
+    // Whether the guest's own cursor is drawn over its picture.
+    void setDrawCursor(bool draw) { m_drawCursor = draw; }
+    GuestCursor guestCursor() const { return m_frames->cursor(); }
+    // The guest shows a cursor of its own right now.
+    bool guestCursorVisible() const {
+      const GuestCursor cursor = m_frames->cursor();
+      return cursor.visible && cursor.pixels != nullptr;
+    }
+
     // Writes the guest's picture as it is, not as the window shows it, to a PPM file at the next
     // draw: for tests, and the start of a thumbnail.
     void dumpTo(std::string path) { m_dumpPath = std::move(path); }
@@ -40,5 +49,6 @@ namespace coffret {
     std::uint64_t m_id;
     mutable Stats m_stats;
     mutable std::string m_dumpPath;
+    bool m_drawCursor = true;
   };
 } // namespace coffret

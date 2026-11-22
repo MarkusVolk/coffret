@@ -31,6 +31,9 @@ namespace coffret {
       InputGrab& grab;
       // Something the window shows about the console changed.
       std::function<void()> changed;
+      // The host's own pointer is to be hidden over the picture, where the guest draws one, or
+      // shown again; `serial` is the pointer event's.
+      std::function<void(bool hidden, std::uint32_t serial)> hostCursor = {};
       // The guest copied a text: it becomes the host's clipboard.
       std::function<void(std::string)> guestCopied = {};
     };
@@ -105,6 +108,8 @@ namespace coffret {
     // Keys whose press went to the guest; their release follows even after the grab ended.
     std::unordered_set<std::uint32_t> m_keysDown;
     std::unordered_set<std::uint32_t> m_buttonsDown;
+    // The host's pointer is hidden because the guest draws its own.
+    bool m_hostCursorHidden = false;
     // Movement of a locked pointer not yet sent, as the guest takes whole steps only.
     double m_pendingDx = 0.0, m_pendingDy = 0.0;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
