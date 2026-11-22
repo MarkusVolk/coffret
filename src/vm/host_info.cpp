@@ -14,8 +14,10 @@ std::string coffret::defaultRenderNode() {
     if (!name.starts_with("renderD")) {
       continue;
     }
+    // vgem and vkms sit on no real bus: "faux" on newer kernels, "platform" with their own driver on older ones.
     const auto driver = std::filesystem::read_symlink(entry.path() / "device" / "driver", error).filename().string();
-    if (!error && driver != "vgem" && driver != "vkms" && ::access(("/dev/dri/" + name).c_str(), R_OK | W_OK) == 0) {
+    const auto bus = std::filesystem::read_symlink(entry.path() / "device" / "subsystem", error).filename().string();
+    if (!error && bus != "faux" && driver != "vgem" && driver != "vkms" && ::access(("/dev/dri/" + name).c_str(), R_OK | W_OK) == 0) {
       nodes.push_back("/dev/dri/" + name);
     }
     error.clear();

@@ -199,17 +199,37 @@ namespace {
   void applyFirmware(xml_node domain, const coffret::VmConfig& config) {
     xml_node os = ensure(domain, "os");
     const bool uefi = config.firmware != Firmware::Bios;
-    if (uefi) {
+    const bool secure = config.firmware == Firmware::UefiSecureBoot;
+    if (uefi && !config.firmwareCode.empty()) {
+      // A firmware named outright.
+      os.remove_attribute("firmware");
+      os.remove_child("firmware");
+      xml_node loader = ensure(os, "loader");
+      setAttribute(loader, "readonly", "yes");
+      setAttribute(loader, "secure", secure ? "yes" : "no");
+      setAttribute(loader, "type", "pflash");
+      setAttribute(loader, "format", "qcow2");
+      setText(loader, config.firmwareCode);
+      xml_node nvram = ensure(os, "nvram");
+      if (!config.nvramTemplate.empty()) {
+        setAttribute(nvram, "template", config.nvramTemplate);
+        setAttribute(nvram, "templateFormat", "qcow2");
+      } else {
+        nvram.remove_attribute("template");
+        nvram.remove_attribute("templateFormat");
+      }
+      // qcow2, so an internal snapshot holds the firmware's variables with the disks.
+      setAttribute(nvram, "format", "qcow2");
+      setText(nvram, config.nvramPath);
+    } else if (uefi) {
       setAttribute(os, "firmware", "efi");
       // The loader libvirt picked for the old setting would win over a changed one.
       os.remove_child("loader");
       xml_node firmware = ensure(os, "firmware");
-      const char* secure = config.firmware == Firmware::UefiSecureBoot ? "yes" : "no";
-      setAttribute(feature(firmware, "secure-boot"), "enabled", secure);
-      setAttribute(feature(firmware, "enrolled-keys"), "enabled", secure);
+      setAttribute(feature(firmware, "secure-boot"), "enabled", secure ? "yes" : "no");
+      setAttribute(feature(firmware, "enrolled-keys"), "enabled", secure ? "yes" : "no");
       xml_node nvram = present(os, "nvram", !config.nvramPath.empty());
       if (nvram) {
-        // qcow2, so an internal snapshot holds the firmware's variables with the disks.
         setAttribute(nvram, "format", "qcow2");
         nvram.remove_attribute("template");
         nvram.remove_attribute("templateFormat");
@@ -225,7 +245,7 @@ namespace {
     while (os.remove_child("boot")) {
     }
     xml_node features = ensure(domain, "features");
-    xml_node smm = present(features, "smm", config.firmware == Firmware::UefiSecureBoot);
+    xml_node smm = present(features, "smm", secure);
     if (smm) {
       setAttribute(smm, "state", "on");
     }
@@ -658,6 +678,11 @@ std::expected<coffret::VmConfig, std::string> coffret::readDomainXml(std::string
     }
   }
   config.nvramPath = os.child_value("nvram");
+  // A firmware libvirt picked is its to pick again; one named outright stays.
+  if (uefi && !os.attribute("firmware")) {
+    config.firmwareCode = os.child_value("loader");
+    config.nvramTemplate = os.child("nvram").attribute("template").value();
+  }
 
   const xml_node devices = domain.child("devices");
   config.tpm = static_cast<bool>(devices.child("tpm"));

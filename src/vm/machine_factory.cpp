@@ -3,6 +3,7 @@
 #include "fs/xdg_dirs.h"
 #include "storage/disk_image.h"
 #include "storage/process.h"
+#include "vm/firmware_store.h"
 #include "vm/host_info.h"
 
 #include <filesystem>
@@ -72,6 +73,13 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareImport(const Image
   config.cpus = request.cpus;
   config.firmware = firmwareOfImage(disk.string(), folder).value_or(Firmware::Uefi);
   if (config.firmware != Firmware::Bios) {
+    const auto firmware = prepareFirmware(false);
+    if (!firmware) {
+      fs::remove_all(folder, error);
+      return std::unexpected(firmware.error());
+    }
+    config.firmwareCode = firmware->code;
+    config.nvramTemplate = firmware->variables;
     config.nvramPath = (folder / "vars.qcow2").string();
   }
   config.disks.push_back({.path = disk.string(), .bootOrder = 1});

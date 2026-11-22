@@ -157,6 +157,23 @@ int main() {
   const auto fewer = coffret::updateDomainXml(*updated, *existing, environment);
   CHECK(fewer.has_value() && !has(*fewer, "data.qcow2") && has(*fewer, "tools.iso") && has(*fewer, "bus=\"0x04\""));
 
+  // A firmware named outright: no picking by libvirt, and the template for new variables.
+  auto named = config;
+  named.firmwareCode = "/fw/code.qcow2";
+  named.nvramTemplate = "/fw/vars.qcow2";
+  const std::string namedXml = coffret::buildDomainXml(named, environment);
+  CHECK(has(namedXml, "<loader readonly=\"yes\" secure=\"no\" type=\"pflash\" format=\"qcow2\">/fw/code.qcow2</loader>"));
+  CHECK(has(namedXml, "<nvram template=\"/fw/vars.qcow2\" templateFormat=\"qcow2\" format=\"qcow2\">/vm/fedora/vars.qcow2</nvram>"));
+  CHECK(!has(namedXml, "firmware="));
+  CHECK((*coffret::readDomainXml(namedXml) == named));
+  named.firmware = coffret::Firmware::UefiSecureBoot;
+  const auto secured = coffret::updateDomainXml(namedXml, named, environment);
+  CHECK(secured.has_value() && has(*secured, "secure=\"yes\"") && has(*secured, "<smm state=\"on\""));
+  CHECK((*coffret::readDomainXml(*secured) == named));
+  // Back to a firmware of libvirt's choice.
+  const auto picked = coffret::updateDomainXml(namedXml, config, environment);
+  CHECK(picked.has_value() && has(*picked, "<os firmware=\"efi\">") && !has(*picked, "<loader"));
+
   // BIOS has neither firmware features nor variables.
   auto bios = config;
   bios.firmware = coffret::Firmware::Bios;

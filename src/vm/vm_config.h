@@ -73,6 +73,10 @@ namespace coffret {
     unsigned memoryMiB = 4096;
     unsigned cpus = 2;
     Firmware firmware = Firmware::Uefi;
+    // The firmware's code and the file new variables are copied from, both qcow2; with them empty
+    // libvirt picks a firmware by itself, which needs one that comes as qcow2.
+    std::string firmwareCode;
+    std::string nvramTemplate;
     // Where the firmware keeps its variables; needed for UEFI, a qcow2 file so snapshots include it.
     std::string nvramPath;
     bool tpm = false;

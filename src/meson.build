@@ -18,6 +18,7 @@ app_sources = files(
   'qemu/qmp_attach.cpp',
   'storage/process.cpp',
   'ui/console_view.cpp',
+  'vm/firmware_store.cpp',
   'vm/host_info.cpp',
   'vm/machine_factory.cpp',
   'ui/palette_file.cpp',

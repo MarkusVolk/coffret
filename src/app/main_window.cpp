@@ -171,6 +171,15 @@ coffret::ConsoleView* coffret::MainWindow::shownConsole() {
 void coffret::MainWindow::machinesChanged() {
   m_listStale = true;
   m_tabsStale = true;
+  if (m_services.hypervisor.listed() && !m_waiting.empty()) {
+    for (const auto& [name, parameter] : std::exchange(m_waiting, {})) {
+      action(name, parameter);
+    }
+  }
+  if (!m_openWhenKnown.empty() && m_services.hypervisor.find(m_openWhenKnown)) {
+    openTab(std::exchange(m_openWhenKnown, {}));
+    return;
+  }
   // A machine that is gone takes its tab along.
   for (std::size_t index = m_tabs.size(); index-- > 0;) {
     if (m_services.hypervisor.connected() && !m_services.hypervisor.find(m_tabs[index]->uuid)) {
@@ -324,7 +333,8 @@ void coffret::MainWindow::importImage(ImageImport request) {
               }
               if (uuid) {
                 m_message.clear();
-                openTab(*uuid);
+                // Shown as soon as the list has it.
+                m_openWhenKnown = *uuid;
               } else {
                 // What was set up for a machine that does not exist is of no use.
                 std::error_code error;
@@ -369,6 +379,11 @@ std::string coffret::MainWindow::describe() const {
 }
 
 bool coffret::MainWindow::action(const std::string& name, const std::string& parameter) {
+  // What is about machines waits for the list of them.
+  if (!m_services.hypervisor.listed() && name != "fullscreen" && name != "state" && name != "search") {
+    m_waiting.emplace_back(name, parameter);
+    return true;
+  }
   using Call = void (Hypervisor::*)(const std::string&, Hypervisor::Done);
   static const std::pair<const char*, Call> kPower[] = {
       {"start", &Hypervisor::start},        {"shutdown", &Hypervisor::shutDown}, {"force-off", &Hypervisor::forceOff},

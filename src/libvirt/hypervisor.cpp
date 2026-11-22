@@ -192,6 +192,7 @@ void coffret::Hypervisor::connect() {
 void coffret::Hypervisor::lost(const std::string& why) {
   m_core.reset();
   m_machines.clear();
+  m_listed = false;
   if (!why.empty()) {
     m_problem = why;
     kLog.warn("{}", why);
@@ -251,6 +252,7 @@ void coffret::Hypervisor::refresh() {
         m_refreshing = false;
         if (m_core) {
           m_machines = std::move(machines);
+          m_listed = true;
           changed();
         }
         if (m_refreshAgain) {

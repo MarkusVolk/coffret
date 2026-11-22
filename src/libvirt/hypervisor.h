@@ -52,6 +52,8 @@ namespace coffret {
     // Connects, and again by itself whenever the connection is lost.
     void connect();
     bool connected() const noexcept { return m_core != nullptr; }
+    // Connected, and the machines have been read at least once.
+    bool listed() const noexcept { return m_core != nullptr && m_listed; }
     // Why there is no connection; empty while connecting for the first time.
     const std::string& problem() const noexcept { return m_problem; }
 
@@ -100,6 +102,7 @@ namespace coffret {
     std::string m_problem;
     std::function<void()> m_changed;
     bool m_connecting = false;
+    bool m_listed = false;
     bool m_refreshing = false;
     bool m_refreshAgain = false;
     unsigned m_retryTimer = 0;

@@ -125,6 +125,10 @@ namespace coffret {
     std::vector<std::unique_ptr<Tab>> m_tabs;
     // The tab shown; none for the home page.
     std::string m_current;
+    // A machine that was just made, for its tab.
+    std::string m_openWhenKnown;
+    // Actions that arrived before the machines were known.
+    std::vector<std::pair<std::string, std::string>> m_waiting;
     std::string m_query;
     std::string m_message;
     bool m_listStale = true;
