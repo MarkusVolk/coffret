@@ -4,6 +4,7 @@
 #include "core/log.h"
 #include "core/ui_phase.h"
 #include "display/console_node.h"
+#include "input/input_grab.h"
 #include "input/linux_to_qnum.h"
 #include "input/raw_keyboard.h"
 #include "qemu/qmp_attach.h"
@@ -133,7 +134,15 @@ void coffret::ConsoleWindow::attach() {
                       m_problem = why;
                       requestUpdate();
                     },
-                .pointerMode = [this](bool) { requestUpdate(); },
+                .pointerMode =
+                    [this](bool) {
+                      // A guest that loads its tablet driver no longer needs the pointer locked, and the other way round.
+                      if (m_grabbed) {
+                        release();
+                        grab();
+                      }
+                      requestUpdate();
+                    },
             }
         );
       }
@@ -167,8 +176,9 @@ std::string coffret::ConsoleWindow::describe() const {
   }
   const auto stats = m_console->stats();
   return std::format(
-      "{}x{}   {}   {:.0f} fps   pointer: {}", stats.width, stats.height, stats.path, m_fps,
-      m_display->pointerAbsolute() ? "absolute" : "relative"
+      "{}x{}   {}   {:.0f} fps   pointer: {}   {}", stats.width, stats.height, stats.path, m_fps,
+      m_display->pointerAbsolute() ? "absolute" : "relative",
+      m_grabbed ? "Ctrl+Alt releases keyboard and mouse" : "click into the picture to control the guest"
   );
 }
 
@@ -179,10 +189,23 @@ bool coffret::ConsoleWindow::action(const std::string& name, const std::string& 
     kLog.info("state: {}", describe());
     std::println("{}", describe());
   } else if (name == "key" && m_display) {
-    // A Linux key code, pressed and released: for tests without a keyboard.
-    const auto evdev = static_cast<std::uint32_t>(std::strtoul(parameter.c_str(), nullptr, 0));
-    key(evdev, true);
-    key(evdev, false);
+    // Linux key codes, pressed in this order and released in reverse: for tests without a keyboard.
+    std::vector<std::uint32_t> keys;
+    for (const char* text = parameter.c_str(); *text;) {
+      char* end = nullptr;
+      keys.push_back(static_cast<std::uint32_t>(std::strtoul(text, &end, 0)));
+      text = *end ? end + 1 : end;
+    }
+    for (const auto evdev : keys) {
+      sendKey(evdev, true);
+    }
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+      sendKey(*it, false);
+    }
+  } else if (name == "grab") {
+    grab();
+  } else if (name == "release") {
+    release();
   } else if (name == "size" && m_display) {
     unsigned width = 0, height = 0;
     if (std::sscanf(parameter.c_str(), "%ux%u", &width, &height) != 2) {
@@ -234,19 +257,76 @@ void coffret::ConsoleWindow::prepare() {
   m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())});
 }
 
-void coffret::ConsoleWindow::key(std::uint32_t evdev, bool pressed) {
-  if (!m_display || !m_ready) {
+void coffret::ConsoleWindow::grab() {
+  if (m_grabbed || !m_display || !m_ready) {
     return;
   }
+  m_grabbed = true;
+  m_chordArmed = false;
+  m_services.grab.inhibitShortcuts(m_surface.wlSurface());
+  if (!m_display->pointerAbsolute()) {
+    m_pendingDx = m_pendingDy = 0.0;
+    m_services.grab.lockPointer(m_surface.wlSurface(), [this](double dx, double dy) {
+      m_pendingDx += dx;
+      m_pendingDy += dy;
+      const auto stepX = static_cast<std::int32_t>(m_pendingDx), stepY = static_cast<std::int32_t>(m_pendingDy);
+      if (stepX != 0 || stepY != 0) {
+        m_pendingDx -= stepX;
+        m_pendingDy -= stepY;
+        m_display->pointerMotion(stepX, stepY);
+      }
+    });
+  }
+  requestUpdate();
+}
+
+void coffret::ConsoleWindow::release() {
+  if (!m_grabbed) {
+    return;
+  }
+  m_grabbed = false;
+  m_chordArmed = false;
+  m_services.grab.releaseShortcuts();
+  m_services.grab.unlockPointer();
+  requestUpdate();
+}
+
+void coffret::ConsoleWindow::focusLost() {
+  release();
+  m_keysDown.clear();
+}
+
+void coffret::ConsoleWindow::sendKey(std::uint32_t evdev, bool pressed) {
   const std::uint32_t qnum = qnumOf(evdev);
-  if (qnum == 0) {
+  if (qnum == 0 || !m_display || !m_ready) {
     return;
   }
   if (pressed) {
+    m_keysDown.insert(evdev);
     m_display->keyPress(qnum);
-  } else {
+  } else if (m_keysDown.erase(evdev) != 0) {
     m_display->keyRelease(qnum);
   }
+}
+
+void coffret::ConsoleWindow::key(std::uint32_t evdev, bool pressed) {
+  const bool control = evdev == KEY_LEFTCTRL || evdev == KEY_RIGHTCTRL;
+  const bool alt = evdev == KEY_LEFTALT || evdev == KEY_RIGHTALT;
+  if (!pressed) {
+    // The guest saw the press, so it gets the release, grab or not.
+    sendKey(evdev, false);
+    if (m_grabbed && m_chordArmed && (control || alt)) {
+      release();
+    }
+    m_chordArmed = false;
+    return;
+  }
+  if (!m_grabbed) {
+    return;
+  }
+  sendKey(evdev, true);
+  const auto down = [this](std::uint32_t a, std::uint32_t b) { return m_keysDown.contains(a) || m_keysDown.contains(b); };
+  m_chordArmed = (control || alt) && m_keysDown.size() == 2 && down(KEY_LEFTCTRL, KEY_RIGHTCTRL) && down(KEY_LEFTALT, KEY_RIGHTALT);
 }
 
 void coffret::ConsoleWindow::pointer(const PointerEvent& event) {
@@ -271,8 +351,10 @@ void coffret::ConsoleWindow::pointer(const PointerEvent& event) {
     }
     break;
   case PointerEvent::Type::Button:
-    if (const auto button = buttonOf(event.button); button && position()) {
+    // A locked pointer has no position; before the lock a click must land in the picture.
+    if (const auto button = buttonOf(event.button); button && (m_services.grab.pointerLocked() || position())) {
       if (event.pressed) {
+        grab();
         m_display->pointerPress(*button);
       } else {
         m_display->pointerRelease(*button);

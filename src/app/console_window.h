@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 class AnimationManager;
 class Label;
@@ -19,6 +20,7 @@ struct PointerEvent;
 
 namespace coffret {
   class ConsoleNode;
+  class InputGrab;
   class RawKeyboard;
 
   // A window that is nothing but the console of one QEMU, attached over its QMP socket. The first
@@ -30,6 +32,7 @@ namespace coffret {
       RenderContext& renderer;
       AnimationManager& animations;
       RawKeyboard& keyboard;
+      InputGrab& grab;
     };
 
     ConsoleWindow(Services services, std::string qmpSocket);
@@ -45,6 +48,8 @@ namespace coffret {
 
     void pointer(const PointerEvent& event);
     void key(std::uint32_t evdev, bool pressed);
+    // The window lost the keyboard: the guest lets go of it too.
+    void focusLost();
 
   private:
     void attach();
@@ -53,6 +58,10 @@ namespace coffret {
     void requestGuestSize();
     void requestUpdate();
     std::string describe() const;
+    // Hands keyboard and mouse to the guest, until Ctrl+Alt or until the window loses the keyboard.
+    void grab();
+    void release();
+    void sendKey(std::uint32_t evdev, bool pressed);
 
     Services m_services;
     std::string m_qmpSocket;
@@ -73,6 +82,13 @@ namespace coffret {
     std::uint64_t m_framesAtLastStatus = 0;
     std::chrono::steady_clock::time_point m_lastStatus{};
     double m_fps = 0.0;
+    bool m_grabbed = false;
+    // Ctrl and Alt are down with nothing else pressed since: letting one go releases the grab.
+    bool m_chordArmed = false;
+    // Keys whose press went to the guest; their release follows even after the grab ended.
+    std::unordered_set<std::uint32_t> m_keysDown;
+    // Movement of a locked pointer not yet sent, as the guest takes whole steps only.
+    double m_pendingDx = 0.0, m_pendingDy = 0.0;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
   };
 } // namespace coffret

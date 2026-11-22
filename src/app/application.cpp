@@ -15,6 +15,7 @@
 #include "event_loop/deferred_call_poll_source.h"
 #include "event_loop/glib_poll_source.h"
 #include "event_loop/timer_poll_source.h"
+#include "input/input_grab.h"
 #include "input/raw_keyboard.h"
 #include "platform/desktop_integration.h"
 #include "render/animation/animation_manager.h"
@@ -122,6 +123,7 @@ int coffret::runApplication(const Launch& launch) {
     connection.setTextInputService(&textInput);
     auto& desktop = connection.extension<DesktopIntegration>();
     auto& keyboard = connection.extension<RawKeyboard>();
+    auto& grab = connection.extension<InputGrab>();
     GlSharedContext graphics;
     graphics.initialize(connection.display());
     RenderContext renderer;
@@ -135,7 +137,8 @@ int coffret::runApplication(const Launch& launch) {
 
     {
       ConsoleWindow window(
-          {.connection = connection, .renderer = renderer, .animations = animations, .keyboard = keyboard}, launch.qmpSocket
+          {.connection = connection, .renderer = renderer, .animations = animations, .keyboard = keyboard, .grab = grab},
+          launch.qmpSocket
       );
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
         if (!request.action.empty() && !window.action(request.action, request.parameter)) {
@@ -156,7 +159,11 @@ int coffret::runApplication(const Launch& launch) {
               window.key(key, pressed);
             }
           },
-          {}
+          [&window](wl_surface* surface, bool entered) {
+            if (surface == window.surface() && !entered) {
+              window.focusLost();
+            }
+          }
       );
 
       DeferredCallPollSource deferred;

@@ -20,6 +20,9 @@ foreach protocol : [
   ['xdg-decoration-unstable-v1', 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
   ['xdg-foreign-unstable-v2', 'unstable/xdg-foreign/xdg-foreign-unstable-v2.xml'],
   ['primary-selection-unstable-v1', 'unstable/primary-selection/primary-selection-unstable-v1.xml'],
+  ['pointer-constraints-unstable-v1', 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml'],
+  ['relative-pointer-unstable-v1', 'unstable/relative-pointer/relative-pointer-unstable-v1.xml'],
+  ['keyboard-shortcuts-inhibit-unstable-v1', 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml'],
 ]
   header = custom_target(protocol[0] + '-header',
     input: protocol_root / protocol[1],
@@ -41,6 +44,7 @@ gio = dependency('gio-2.0', version: '>=2.76')
 gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 nlohmann_json = dependency('nlohmann_json')
+pugixml = dependency('pugixml')
 egl = dependency('egl')
 glesv2 = dependency('glesv2')
 
@@ -76,11 +80,12 @@ core_lib = static_library('coffret-core',
     'src/display/frame_store.cpp',
     'src/fs/xdg_dirs.cpp',
     'src/input/linux_to_qnum.c',
+    'src/vm/domain_xml.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [glib],
+  dependencies: [glib, pugixml],
 )
-core_dep = declare_dependency(link_with: core_lib, include_directories: src_inc, dependencies: [glib])
+core_dep = declare_dependency(link_with: core_lib, include_directories: src_inc, dependencies: [glib, pugixml])
 
 subdir('src')
 

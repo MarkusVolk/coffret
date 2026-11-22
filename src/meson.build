@@ -8,6 +8,7 @@ app_sources = files(
   'display/qemu_display.cpp',
   'event_loop/glib_poll_source.cpp',
   'fs/directory_watch.cpp',
+  'input/input_grab.cpp',
   'input/raw_keyboard.cpp',
   'main.cpp',
   'platform/desktop_integration.cpp',
