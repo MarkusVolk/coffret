@@ -495,14 +495,7 @@ void coffret::MachinePage::rebuildFacts() {
   for (const auto& nic : config.nics) {
     fact("Network", nic.kind == NetworkKind::Bridge ? std::format("Bridged ({})", nic.bridge) : "NAT");
   }
-  fact(
-      "Firmware", config.firmware == Firmware::Bios             ? "BIOS"
-                  : config.firmware == Firmware::UefiSecureBoot ? "UEFI with secure boot"
-                                                                : "UEFI"
-  );
-  if (config.tpm) {
-    fact("TPM", "2.0");
-  }
+  fact("Firmware", config.firmware == Firmware::Bios ? "BIOS" : "UEFI");
   m_factsStale = false;
 }
 
@@ -522,7 +515,7 @@ void coffret::MachinePage::rebuildSnapshots() {
     row->setPadding(2.0F, 0.0F, 2.0F, static_cast<float>(entry.depth) * 24.0F);
     row->addChild(ui::glyph({.glyph = "camera", .glyphSize = 16.0F, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}));
     auto name = text(snapshot.name, ColorRole::OnSurface);
-    name->setMinWidth(220.0F);
+    name->setMinWidth(std::max(100.0F, 220.0F - static_cast<float>(entry.depth) * 24.0F));
     row->addChild(std::move(name));
     auto detail = text(
         std::format("{}{}", when(snapshot.created), snapshot.running ? "   ·   running" : ""), ColorRole::OnSurfaceVariant,
