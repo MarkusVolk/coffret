@@ -16,8 +16,9 @@ Things to know:
   nor snapshotted while it runs; snapshots are taken while it is off.
 - Clipboard and the guest following the window's size need `spice-vdagent` in the guest. With
   GNOME on Wayland in the guest, text goes from the guest to the host only.
-- A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Files belong to
-  the user on the host; of the guest's users only root is mapped so far.
+- A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes
+  in the guest, the files belong to the user on the host; in the guest they belong to its first
+  user (id 1000).
 - A USB device can only be given to a machine by a user who may open it under `/dev/bus/usb`.
 
 ## Build

@@ -1,0 +1,28 @@
+#!/bin/sh
+# virtiofsd for a shared folder of a desktop: whoever writes in the guest, the file belongs to
+# the user on the host. libvirt has no setting for that, so it starts this in virtiofsd's place.
+
+for candidate in /usr/libexec/virtiofsd /usr/lib/virtiofsd /usr/lib/qemu/virtiofsd "$(command -v virtiofsd)"; do
+	if [ -x "$candidate" ]; then
+		virtiofsd=$candidate
+		break
+	fi
+done
+[ -n "$virtiofsd" ] || { echo "coffret-virtiofsd: no virtiofsd found" >&2; exit 127; }
+
+# libvirt asks what the program can do before it uses it.
+case " $* " in
+*" --print-capabilities "* | *" --version "* | *" --help "*) exec "$virtiofsd" "$@" ;;
+esac
+
+if "$virtiofsd" --help 2>/dev/null | grep -q -- --translate-uid; then
+	# Towards the host everybody is the user (0 inside virtiofsd's own namespace). Towards the
+	# guest the files belong to its first user, 1000 on about every desktop system: the guest's
+	# kernel checks permissions itself and would let nobody but root write otherwise.
+	exec "$virtiofsd" "$@" \
+		--translate-uid squash-guest:0:0:4294967295 \
+		--translate-gid squash-guest:0:0:4294967295 \
+		--translate-uid squash-host:0:1000:4294967295 \
+		--translate-gid squash-host:0:1000:4294967295
+fi
+exec "$virtiofsd" "$@"

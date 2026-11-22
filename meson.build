@@ -68,6 +68,7 @@ subdir('lib')
 build_config = configuration_data()
 build_config.set_quoted('COFFRET_VERSION', meson.project_version())
 build_config.set_quoted('COFFRET_BUILD_REVISION', get_option('build_revision'))
+build_config.set_quoted('COFFRET_INSTALL_LIBEXECDIR', get_option('prefix') / get_option('libexecdir'))
 build_config.set_quoted('COFFRET_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'coffret/assets')
 build_info = configure_file(
   input: 'src/app/build_info.h.in',
@@ -104,4 +105,5 @@ install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadi
 install_data('assets/templates/colors.toml', install_dir: get_option('datadir') / 'coffret/templates')
 install_data('assets/desktop/de.flk.Coffret.desktop', install_dir: get_option('datadir') / 'applications')
 install_data('assets/icons/de.flk.Coffret.svg', install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
+install_data('data/coffret-virtiofsd', install_dir: get_option('libexecdir'), install_mode: 'rwxr-xr-x')
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/coffret')

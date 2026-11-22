@@ -1,6 +1,7 @@
 #include "app/main_window.h"
 
 #include "app/console_window.h"
+#include "coffret_build_info.h"
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
@@ -45,8 +46,14 @@ namespace {
   coffret::DomainEnvironment environment() {
     static const coffret::DomainEnvironment found = [] {
       const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+      // coffret's own starter for virtiofsd where it is installed, the plain program otherwise.
+      const char* override = std::getenv("COFFRET_VIRTIOFSD");
+      std::string virtiofsd = override && *override ? override : COFFRET_INSTALL_LIBEXECDIR "/coffret-virtiofsd";
+      if (::access(virtiofsd.c_str(), X_OK) != 0) {
+        virtiofsd = coffret::findVirtiofsd();
+      }
       return coffret::DomainEnvironment{
-          .virtiofsd = coffret::findVirtiofsd(), .uid = ::getuid(), .gid = ::getgid(), .runtimeDir = runtime ? runtime : ""
+          .virtiofsd = std::move(virtiofsd), .uid = ::getuid(), .gid = ::getgid(), .runtimeDir = runtime ? runtime : ""
       };
     }();
     return found;
