@@ -73,6 +73,7 @@ namespace coffret {
     Stepper* m_memory = nullptr;
     Stepper* m_cpus = nullptr;
     Toggle* m_accel = nullptr;
+    Label* m_accelNote = nullptr;
     Toggle* m_sound = nullptr;
     Toggle* m_microphone = nullptr;
     Toggle* m_tpm = nullptr;

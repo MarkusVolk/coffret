@@ -141,6 +141,7 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
               },
       })
   ));
+  page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_accelNote)));
   page->addChild(field(
       "Sound",
       ui::toggle({
@@ -677,6 +678,10 @@ void coffret::MachinePage::sync() {
                                  : "A connected device belongs to the machine until it is disconnected or the machine stops."
   );
   const bool active = isActive(m_machine.state);
+  const bool windows = m_edit.kind == GuestKind::Windows;
+  m_accel->setEnabled(!windows || m_edit.accel3d);
+  m_accelNote->setVisible(windows);
+  m_accelNote->setText("Windows has no 3D driver for this virtual graphics card yet; it draws in 2D either way.");
   m_microphone->setEnabled(m_edit.sound);
   m_secureBoot->setEnabled(m_edit.firmware != Firmware::Bios);
   const bool nat = m_edit.nics.empty() || m_edit.nics.front().kind == NetworkKind::User;
