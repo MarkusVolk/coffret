@@ -19,7 +19,8 @@ Things to know:
 - A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes
   in the guest, the files belong to the user on the host; in the guest they belong to its first
   user (id 1000).
-- A USB device can only be given to a machine by a user who may open it under `/dev/bus/usb`.
+- A USB device is given to a machine through `pkexec` and `coffret-usb-acl`, which lets the user
+  open that one device; the polkit action asks nobody in the active session. It needs `setfacl`.
 
 ## Build
 
