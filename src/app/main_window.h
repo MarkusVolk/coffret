@@ -5,11 +5,13 @@
 #include "render/scene/input_dispatcher.h"
 #include "ui/console_view.h"
 #include "ui/controls/scroll_view.h"
+#include "usb/usb_devices.h"
 #include "vm/machine_factory.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class AnimationManager;
@@ -110,6 +112,7 @@ namespace coffret {
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
     void cloneMachine(const std::string& name, bool linked);
+    void connectUsb(const HostUsbDevice& device, bool connect);
     std::string describe() const;
 
     Services m_services;
@@ -175,6 +178,9 @@ namespace coffret {
     std::string m_query;
     std::string m_message;
     std::string m_hostClipboard;
+    // The devices given to each running machine from here, by its uuid.
+    std::unordered_map<std::string, std::vector<HostUsbDevice>> m_usbConnected;
+    std::string m_usbShownFor;
     // The machine whose snapshots the page has.
     std::string m_snapshotsOf;
     bool m_listStale = true;

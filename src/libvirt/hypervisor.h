@@ -85,6 +85,11 @@ namespace coffret {
     // Forgets a snapshot; those taken after it stay.
     void deleteSnapshot(const std::string& uuid, const std::string& name, Done done);
 
+    // Gives a device of the host to the running machine, or takes it back: `xml` is libvirt's
+    // description of the device.
+    void attachDevice(const std::string& uuid, const std::string& xml, Done done);
+    void detachDevice(const std::string& uuid, const std::string& xml, Done done);
+
     // A connection to the running machine's display, for QemuDisplay.
     void openDisplay(const std::string& uuid, std::function<void(std::expected<int, std::string>)> done);
 

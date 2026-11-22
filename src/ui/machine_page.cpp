@@ -257,6 +257,11 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
   ));
 
   page->addChild(ui::separator({.spacing = Style::spaceSm}));
+  page->addChild(heading("USB devices"));
+  page->addChild(text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_usbNote));
+  page->addChild(ui::column({.out = &m_usbRows, .align = FlexAlign::Stretch, .gap = 2.0F}));
+
+  page->addChild(ui::separator({.spacing = Style::spaceSm}));
   page->addChild(heading("Snapshots"));
   page->addChild(ui::row(
       {.align = FlexAlign::Center, .gap = Style::spaceSm},
@@ -338,6 +343,35 @@ void coffret::MachinePage::rebuildFolders() {
   m_foldersStale = false;
 }
 
+void coffret::MachinePage::setConnectedUsb(std::vector<HostUsbDevice> devices) {
+  m_usbConnected = std::move(devices);
+  m_usbStale = true;
+}
+
+void coffret::MachinePage::rebuildUsb() {
+  clear(m_usbRows);
+  const bool active = isActive(m_machine.state);
+  for (const auto& device : m_usbDevices) {
+    const bool connected = std::ranges::find(m_usbConnected, device) != m_usbConnected.end();
+    auto row = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
+    row->addChild(ui::glyph({.glyph = "usb", .glyphSize = 16.0F, .color = colorSpecFromRole(connected ? ColorRole::Primary : ColorRole::OnSurfaceVariant)}));
+    auto name = text(device.name, ColorRole::OnSurface);
+    name->setMinWidth(320.0F);
+    row->addChild(std::move(name));
+    auto ids = text(std::format("{:04x}:{:04x}", device.vendor, device.product), ColorRole::OnSurfaceVariant, Style::fontSizeCaption);
+    ids->setFlexGrow(1.0F);
+    row->addChild(std::move(ids));
+    row->addChild(ui::button({
+        .text = connected ? "Disconnect" : "Connect",
+        .enabled = active,
+        .variant = connected ? ButtonVariant::Secondary : ButtonVariant::Outline,
+        .onClick = [this, device, connected] { m_callbacks.usb(device, !connected); },
+    }));
+    m_usbRows->addChild(std::move(row));
+  }
+  m_usbStale = false;
+}
+
 void coffret::MachinePage::rebuildRemove() {
   clear(m_removeRow);
   const bool active = isActive(m_machine.state);
@@ -381,6 +415,10 @@ void coffret::MachinePage::setMachine(const Machine& machine) {
   // Settings that changed underneath replace what is shown, unless the user is in the middle of changing them.
   const bool refill = other || (machine.config != m_machine.config && m_edit == m_machine.config);
   m_removeStale = m_removeStale || other || isActive(machine.state) != isActive(m_machine.state);
+  m_usbStale = m_usbStale || other || isActive(machine.state) != isActive(m_machine.state);
+  if (other || !isActive(machine.state)) {
+    m_usbConnected.clear();
+  }
   if (other) {
     m_removeAsked = false;
     m_askName.clear();
@@ -524,6 +562,22 @@ void coffret::MachinePage::sync() {
   if (m_foldersStale) {
     rebuildFolders();
   }
+  // Devices come and go; looking every two seconds while the page is up is cheap.
+  if (const auto now = std::chrono::steady_clock::now(); now - m_usbScanned > std::chrono::seconds(2)) {
+    m_usbScanned = now;
+    if (auto devices = listUsbDevices(); devices != m_usbDevices) {
+      m_usbDevices = std::move(devices);
+      m_usbStale = true;
+    }
+  }
+  if (m_usbStale) {
+    rebuildUsb();
+  }
+  m_usbNote->setText(
+      !isActive(m_machine.state) ? "A device of this computer can be given to the machine while it runs; this computer then no longer has it."
+      : m_usbDevices.empty()     ? "No devices are plugged in."
+                                 : "A connected device belongs to the machine until it is disconnected or the machine stops."
+  );
   const bool active = isActive(m_machine.state);
   m_microphone->setEnabled(m_edit.sound);
   const bool nat = !m_edit.nics.empty() && m_edit.nics.front().kind == NetworkKind::User;

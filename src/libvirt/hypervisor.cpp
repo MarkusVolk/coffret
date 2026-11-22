@@ -443,6 +443,22 @@ void coffret::Hypervisor::deleteSnapshot(const std::string& uuid, const std::str
   );
 }
 
+void coffret::Hypervisor::attachDevice(const std::string& uuid, const std::string& xml, Done done) {
+  run<void>(
+      uuid,
+      plain([xml](virDomainPtr domain) { return virDomainAttachDeviceFlags(domain, xml.c_str(), VIR_DOMAIN_AFFECT_LIVE); }, "The device could not be given to the machine."),
+      std::move(done)
+  );
+}
+
+void coffret::Hypervisor::detachDevice(const std::string& uuid, const std::string& xml, Done done) {
+  run<void>(
+      uuid,
+      plain([xml](virDomainPtr domain) { return virDomainDetachDeviceFlags(domain, xml.c_str(), VIR_DOMAIN_AFFECT_LIVE); }, "The device could not be taken back."),
+      std::move(done)
+  );
+}
+
 void coffret::Hypervisor::openDisplay(const std::string& uuid, std::function<void(std::expected<int, std::string>)> done) {
   run<int>(
       uuid,

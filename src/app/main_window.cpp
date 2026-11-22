@@ -490,6 +490,38 @@ void coffret::MainWindow::removeMachine(const std::string& uuid, bool deleteFile
   );
 }
 
+void coffret::MainWindow::connectUsb(const HostUsbDevice& device, bool connect) {
+  const std::string uuid = m_current;
+  m_message.clear();
+  std::weak_ptr<int> alive = m_alive;
+  const auto done = [this, alive, uuid, device, connect](Hypervisor::Result result) {
+    if (alive.expired()) {
+      return;
+    }
+    auto& connected = m_usbConnected[uuid];
+    if (!result) {
+      // QEMU opens the device as the user, who by default may not: that takes a rule of the system.
+      m_message = result.error().find("ermission") != std::string::npos
+                      ? std::format("{} could not be opened: this user has no access to USB devices.", device.name)
+                      : result.error();
+      kLog.warn("usb: {}", result.error());
+    } else if (connect) {
+      connected.push_back(device);
+    } else {
+      std::erase(connected, device);
+    }
+    if (uuid == m_current) {
+      m_machinePage->setConnectedUsb(connected);
+    }
+    requestUpdate();
+  };
+  if (connect) {
+    m_services.hypervisor.attachDevice(uuid, usbHostdevXml(device), done);
+  } else {
+    m_services.hypervisor.detachDevice(uuid, usbHostdevXml(device), done);
+  }
+}
+
 void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
   const Machine* machine = currentMachine();
   if (!machine || m_creating) {
@@ -796,6 +828,19 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       return false;
     }
     removeMachine(machine->uuid, name == "delete");
+  } else if (name == "usb" || name == "usb-off") {
+    // "046d:c548": the first device of these ids that is plugged in.
+    unsigned vendor = 0, product = 0;
+    if (!currentMachine() || std::sscanf(parameter.c_str(), "%x:%x", &vendor, &product) != 2) {
+      return false;
+    }
+    for (const auto& device : listUsbDevices()) {
+      if (device.vendor == vendor && device.product == product) {
+        connectUsb(device, name == "usb");
+        return true;
+      }
+    }
+    m_message = std::format("No USB device {} is plugged in.", parameter);
   } else if (name == "clone" || name == "clone-linked") {
     cloneMachine(parameter, name == "clone-linked");
   } else if (name == "set") {
@@ -1068,6 +1113,7 @@ void coffret::MainWindow::build() {
             requestUpdate();
           },
       .clone = [this](std::string name, bool linked) { cloneMachine(name, linked); },
+      .usb = [this](HostUsbDevice device, bool connect) { connectUsb(device, connect); },
       .remove = [this](bool deleteFiles) { removeMachine(m_current, deleteFiles); },
       .changed = [this] { requestUpdate(); },
   });
@@ -1293,6 +1339,13 @@ void coffret::MainWindow::syncPage() {
   show(m_machinePage, machine && !console);
   if (machine && !console) {
     m_machinePage->setMachine(*machine);
+    if (m_usbShownFor != machine->uuid || !isActive(machine->state)) {
+      if (!isActive(machine->state)) {
+        m_usbConnected.erase(machine->uuid);
+      }
+      m_usbShownFor = machine->uuid;
+      m_machinePage->setConnectedUsb(m_usbConnected[machine->uuid]);
+    }
     if (m_snapshotsOf != machine->uuid) {
       loadSnapshots();
     }
