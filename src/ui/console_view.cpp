@@ -64,6 +64,7 @@ coffret::ConsoleView::ConsoleView(Host host) : m_host(std::move(host)), m_frames
     }
     m_lastStatus = now;
     if (m_active && m_display) {
+      requestGuestSize();
       m_host.changed();
     }
   });
@@ -83,6 +84,8 @@ std::unique_ptr<Node> coffret::ConsoleView::build() {
 void coffret::ConsoleView::attach(int busFd) {
   detach();
   m_problem.clear();
+  // QEMU hands a new listener the pointer the guest has, so a running desktop counts as one at once.
+  m_cursorBefore = m_frames->cursor().serial;
   m_display = std::make_unique<QemuDisplay>(
       busFd, m_frames,
       QemuDisplay::Callbacks{
@@ -121,6 +124,7 @@ void coffret::ConsoleView::attach(int busFd) {
                   m_host.guestCopied(std::move(text));
                 }
               },
+          .scanout = [this](std::uint32_t width, std::uint32_t height) { guestShows(width, height); },
       }
   );
 }
@@ -184,6 +188,10 @@ void coffret::ConsoleView::requestGuestSize() {
   if (!m_display || !m_ready || !m_node || !m_active) {
     return;
   }
+  const GuestCursor cursor = m_frames->cursor();
+  if (cursor.serial == m_cursorBefore || cursor.width == 0) {
+    return;
+  }
   const float scale = m_host.surface.effectiveBufferScale();
   const auto width = static_cast<std::uint32_t>(std::lround(m_node->width() * scale));
   const auto height = static_cast<std::uint32_t>(std::lround(m_node->height() * scale));
@@ -191,6 +199,13 @@ void coffret::ConsoleView::requestGuestSize() {
     return;
   }
   requestSize(width, height);
+}
+
+void coffret::ConsoleView::guestShows(std::uint32_t width, std::uint32_t height) {
+  if (width == 0 || height == 0) {
+    // The guest starts over, a reboot perhaps: what comes next may be a text console again.
+    m_cursorBefore = m_frames->cursor().serial;
+  }
 }
 
 std::string coffret::ConsoleView::describe() const {

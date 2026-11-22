@@ -23,6 +23,8 @@ namespace coffret {
       std::function<void(bool absolute)> pointerMode;
       // The guest copied this text.
       std::function<void(std::string text)> guestClipboard;
+      // The guest shows a picture of this size, or none (0x0).
+      std::function<void(std::uint32_t width, std::uint32_t height)> scanout;
     };
 
     // busFd is a connected socket of QEMU's peer-to-peer display bus; it is owned from here on.

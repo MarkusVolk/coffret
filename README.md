@@ -15,8 +15,10 @@ Things to know:
 
 - With 3D acceleration QEMU cannot save a running machine, so such a machine is neither suspended
   nor snapshotted while it runs; snapshots are taken while it is off.
-- Clipboard and the guest following the window's size need `spice-vdagent` in the guest. With
-  GNOME on Wayland in the guest, text goes from the guest to the host only.
+- The clipboard needs `spice-vdagent` in the guest. With GNOME on Wayland in the guest, text goes
+  from the guest to the host only.
+- The guest follows the window's size once it draws a pointer of its own, as a desktop does. A text
+  console keeps its size: asked for another one, it turns its picture off.
 - An unattended installation gives the guest the keyboard layout, language and time zone of this
   computer, a user and a password. coffret boots the installer's kernel with libosinfo's answers
   in its initrd and boots the disk once the installer is done; for now this works for media whose

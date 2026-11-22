@@ -164,6 +164,8 @@ struct coffret::QemuDisplay::Impl {
   // The copy of the picture for the plain Scanout/Update calls, which carry bytes.
   std::shared_ptr<std::vector<std::uint8_t>> shadow;
   std::uint32_t shadowWidth = 0, shadowHeight = 0, shadowStride = 0, shadowFormat = 0;
+  // The size of the picture last reported to the main thread; 0x0 for none.
+  std::uint32_t shownWidth = 0, shownHeight = 0;
 
   void run();
   bool connect(std::string& why);
@@ -516,6 +518,18 @@ void coffret::QemuDisplay::Impl::methodCall(
   GUnixFDList* fdList = g_dbus_message_get_unix_fd_list(g_dbus_method_invocation_get_message(invocation));
   const auto takeFd = [fdList](gint32 handle) { return fdList ? g_unix_fd_list_get(fdList, handle, nullptr) : -1; };
   const std::string_view name(method);
+  const auto shown = [this](std::uint32_t width, std::uint32_t height) {
+    if (width == shownWidth && height == shownHeight) {
+      return;
+    }
+    shownWidth = width;
+    shownHeight = height;
+    postToMain([this, width, height] {
+      if (callbacks.scanout) {
+        callbacks.scanout(width, height);
+      }
+    });
+  };
 
   if (name == "UpdateDMABUF" || name == "UpdateMap") {
     gint32 x = 0, y = 0, w = 0, h = 0;
@@ -544,6 +558,7 @@ void coffret::QemuDisplay::Impl::methodCall(
     scanout.y0Top = y0Top != FALSE;
     scanout.keep = std::move(keep);
     frames->setDmabuf(std::move(scanout));
+    shown(width, height);
     done();
   } else if (name == "ScanoutDMABUF2") {
     GVariant* handles = nullptr;
@@ -587,6 +602,7 @@ void coffret::QemuDisplay::Impl::methodCall(
     scanout.y0Top = y0Top != FALSE;
     scanout.keep = std::move(keep);
     frames->setDmabuf(std::move(scanout));
+    shown(width, height);
     done();
   } else if (name == "ScanoutMap") {
     gint32 handle = 0;
@@ -607,6 +623,7 @@ void coffret::QemuDisplay::Impl::methodCall(
     }
     const auto* pixels = static_cast<const std::uint8_t*>(mapping->address) + offset;
     frames->setPixels(pixels, width, height, stride, format, std::move(mapping));
+    shown(width, height);
     done();
   } else if (name == "Scanout") {
     guint32 width = 0, height = 0, stride = 0, format = 0;
@@ -626,6 +643,7 @@ void coffret::QemuDisplay::Impl::methodCall(
     shadowStride = stride;
     shadowFormat = format;
     frames->setPixels(shadow->data(), width, height, stride, format, shadow);
+    shown(width, height);
     done();
   } else if (name == "Update") {
     gint32 x = 0, y = 0, w = 0, h = 0;
@@ -651,6 +669,7 @@ void coffret::QemuDisplay::Impl::methodCall(
   } else if (name == "Disable") {
     shadow.reset();
     frames->disable();
+    shown(0, 0);
     done();
   } else if (name == "MouseSet") {
     gint32 x = 0, y = 0, on = 0;
