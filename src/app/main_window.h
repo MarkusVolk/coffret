@@ -98,7 +98,9 @@ namespace coffret {
     void showNew(const std::string& iso);
     void setInstallMedia(const std::string& iso);
     void createNew();
-    void define(const VmConfig& config);
+    // Defines a machine that was just set up; `undo` takes the setting up back when libvirt refuses it.
+    void define(const VmConfig& config, std::function<void()> undo = {});
+    void removeMachine(const std::string& uuid, bool deleteFiles);
     void applySettings(const VmConfig& config);
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);

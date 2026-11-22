@@ -158,14 +158,9 @@ std::expected<coffret::VmConfig, std::string> coffret::runClone(const ClonePlan&
   std::size_t renamed = 0;
   // Back to how it was: the clone's folder goes, and the source's disks get their names back.
   const auto undo = [&](std::string why) -> std::unexpected<std::string> {
-    std::error_code ignored;
-    fs::remove_all(folder, ignored);
-    for (std::size_t index = renamed; index-- > 0;) {
-      const auto& [disk, base] = plan.renames[index];
-      fs::permissions(base, fs::perms::owner_write, fs::perm_options::add, ignored);
-      fs::remove(disk, ignored);
-      fs::rename(base, disk, ignored);
-    }
+    ClonePlan done = plan;
+    done.renames.resize(renamed);
+    undoClone(done, folder);
     return std::unexpected(std::move(why));
   };
   for (const auto& [disk, base] : plan.renames) {
@@ -195,4 +190,51 @@ std::expected<coffret::VmConfig, std::string> coffret::runClone(const ClonePlan&
     fs::permissions(file, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove, error);
   }
   return plan.clone;
+}
+
+void coffret::undoClone(const ClonePlan& plan, const std::string& folder) {
+  namespace fs = std::filesystem;
+  std::error_code ignored;
+  fs::remove_all(folder, ignored);
+  for (std::size_t index = plan.renames.size(); index-- > 0;) {
+    const auto& [disk, base] = plan.renames[index];
+    if (!fs::exists(base, ignored)) {
+      continue;
+    }
+    fs::permissions(base, fs::perms::owner_write, fs::perm_options::add, ignored);
+    // The overlay made in the disk's place holds nothing yet.
+    fs::remove(disk, ignored);
+    fs::rename(base, disk, ignored);
+  }
+}
+
+std::string coffret::ownFolder(const VmConfig& config) {
+  namespace fs = std::filesystem;
+  const fs::path root = dataHome() / "coffret" / "machines";
+  for (const auto& disk : config.disks) {
+    if (disk.cdrom || disk.path.empty()) {
+      continue;
+    }
+    const fs::path folder = fs::path(disk.path).parent_path();
+    return folder.parent_path() == root ? folder.string() : std::string();
+  }
+  return {};
+}
+
+std::vector<std::string> coffret::machinesBuiltOn(const std::string& folder, const std::vector<VmConfig>& others) {
+  std::vector<std::string> names;
+  const std::string prefix = folder + "/";
+  for (const auto& other : others) {
+    for (const auto& disk : other.disks) {
+      if (disk.cdrom || disk.path.empty() || disk.path.starts_with(prefix)) {
+        continue;
+      }
+      const auto info = runCommand(imageInfoCommand(disk.path)).and_then(parseImageInfo);
+      if (info && info->backingFile.starts_with(prefix)) {
+        names.push_back(other.name);
+        break;
+      }
+    }
+  }
+  return names;
 }

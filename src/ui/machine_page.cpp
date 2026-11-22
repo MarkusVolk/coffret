@@ -242,13 +242,57 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
       }),
       text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_cloneNote)
   ));
+
+  page->addChild(ui::separator({.spacing = Style::spaceSm}));
+  page->addChild(heading("Remove"));
+  page->addChild(ui::row({.out = &m_removeRow, .align = FlexAlign::Center, .gap = Style::spaceSm}));
+}
+
+void coffret::MachinePage::rebuildRemove() {
+  clear(m_removeRow);
+  const bool active = isActive(m_machine.state);
+  if (!m_removeAsked) {
+    m_removeRow->addChild(ui::button({
+        .text = "Remove this machine …",
+        .glyph = "trash",
+        .enabled = !active,
+        .variant = ButtonVariant::Outline,
+        .onClick =
+            [this] {
+              m_removeAsked = true;
+              m_removeStale = true;
+              m_callbacks.changed();
+            },
+    }));
+    if (active) {
+      m_removeRow->addChild(text("A machine can be removed while it is off.", ColorRole::OnSurfaceVariant, Style::fontSizeCaption));
+    }
+  } else {
+    const auto answer = [this](bool remove, bool deleteFiles) {
+      return [this, remove, deleteFiles] {
+        m_removeAsked = false;
+        m_removeStale = true;
+        if (remove) {
+          m_callbacks.remove(deleteFiles);
+        }
+        m_callbacks.changed();
+      };
+    };
+    m_removeRow->addChild(ui::button({.text = "Delete with its disks", .glyph = "trash", .variant = ButtonVariant::Primary, .onClick = answer(true, true)}));
+    m_removeRow->addChild(ui::button({.text = "Only out of the library", .variant = ButtonVariant::Outline, .onClick = answer(true, false)}));
+    m_removeRow->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = answer(false, false)}));
+    m_removeRow->addChild(text("Deleting cannot be undone.", ColorRole::OnSurfaceVariant, Style::fontSizeCaption));
+  }
+  m_removeStale = false;
 }
 
 void coffret::MachinePage::setMachine(const Machine& machine) {
   const bool other = machine.uuid != m_machine.uuid;
   // Settings that changed underneath replace what is shown, unless the user is in the middle of changing them.
   const bool refill = other || (machine.config != m_machine.config && m_edit == m_machine.config);
+  m_removeStale = m_removeStale || other || isActive(machine.state) != isActive(m_machine.state);
   if (other) {
+    m_removeAsked = false;
     m_askName.clear();
     m_snapshots.clear();
     m_snapshotsStale = true;
@@ -383,6 +427,9 @@ void coffret::MachinePage::sync() {
   }
   if (m_snapshotsStale) {
     rebuildSnapshots();
+  }
+  if (m_removeStale) {
+    rebuildRemove();
   }
   const bool active = isActive(m_machine.state);
   const bool dirty = m_edit != m_machine.config;

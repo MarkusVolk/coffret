@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <vector>
 
 namespace coffret {
   // A machine made from a disk image that is there already: a cloud image, a Yocto .wic, a disk of
@@ -44,6 +45,16 @@ namespace coffret {
   // Carries out a clone plan for a machine that is off, into a folder that is not there yet, and
   // undoes what it did when a step fails. Blocks while disks are copied.
   std::expected<VmConfig, std::string> runClone(const ClonePlan& plan, const std::string& folder);
+  // Takes a clone back that was carried out in full: for when the new machine cannot be defined.
+  void undoClone(const ClonePlan& plan, const std::string& folder);
+
+  // The folder under <data>/coffret/machines that holds the machine's first disk; empty for a
+  // machine whose disks live elsewhere.
+  std::string ownFolder(const VmConfig& config);
+  // The names of the machines whose disks build on an image in `folder`: linked clones of the
+  // machine that lives there. Runs qemu-img for every disk: for worker threads.
+  std::vector<std::string> machinesBuiltOn(const std::string& folder, const std::vector<VmConfig>& others);
+
   // The same for a machine that is installed from a medium. Quick, but runs qemu-img.
   std::expected<VmConfig, std::string> prepareNew(const NewMachine& request);
 } // namespace coffret

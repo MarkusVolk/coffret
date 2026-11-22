@@ -308,12 +308,18 @@ void coffret::MainWindow::importImage(ImageImport request) {
   );
 }
 
-void coffret::MainWindow::define(const VmConfig& config) {
+void coffret::MainWindow::define(const VmConfig& config, std::function<void()> undo) {
   const char* runtime = std::getenv("XDG_RUNTIME_DIR");
   std::weak_ptr<int> alive = m_alive;
+  if (!undo) {
+    undo = [folder = machineFolder(config.name)] {
+      std::error_code error;
+      std::filesystem::remove_all(folder, error);
+    };
+  }
   m_services.hypervisor.define(
       buildDomainXml(config, {.runtimeDir = runtime ? runtime : ""}),
-      [this, alive, folder = machineFolder(config.name)](std::expected<std::string, std::string> uuid) {
+      [this, alive, undo = std::move(undo)](std::expected<std::string, std::string> uuid) {
         if (alive.expired()) {
           return;
         }
@@ -325,8 +331,7 @@ void coffret::MainWindow::define(const VmConfig& config) {
           m_openWhenKnown = *uuid;
         } else {
           // What was set up for a machine that does not exist is of no use.
-          std::error_code error;
-          std::filesystem::remove_all(folder, error);
+          undo();
           m_message = uuid.error();
           kLog.warn("define: {}", m_message);
         }
@@ -388,6 +393,66 @@ void coffret::MainWindow::snapshotDone(Hypervisor::Result result) {
   requestUpdate();
 }
 
+void coffret::MainWindow::removeMachine(const std::string& uuid, bool deleteFiles) {
+  const Machine* machine = m_services.hypervisor.find(uuid);
+  if (!machine) {
+    return;
+  }
+  if (isActive(machine->state)) {
+    m_message = "A machine can be removed while it is off.";
+    requestUpdate();
+    return;
+  }
+  const std::string folder = ownFolder(machine->config);
+  std::vector<VmConfig> others;
+  for (const auto& other : m_services.hypervisor.machines()) {
+    if (other.uuid != uuid) {
+      others.push_back(other.config);
+    }
+  }
+  m_message.clear();
+  std::weak_ptr<int> alive = m_alive;
+  // Linked clones would lose the disks they build on.
+  runInThread<std::vector<std::string>>(
+      [folder, others = std::move(others), deleteFiles] {
+        return deleteFiles && !folder.empty() ? machinesBuiltOn(folder, others) : std::vector<std::string>();
+      },
+      [this, alive, uuid, folder, deleteFiles](std::vector<std::string> clones) {
+        if (alive.expired()) {
+          return;
+        }
+        if (!clones.empty()) {
+          std::string names;
+          for (const auto& name : clones) {
+            names += (names.empty() ? "" : ", ") + name;
+          }
+          m_message = std::format("Its disks cannot be deleted: {} is linked to them.", names);
+          requestUpdate();
+          return;
+        }
+        m_services.hypervisor.remove(uuid, [this, alive, folder, deleteFiles](Hypervisor::Result result) {
+          if (alive.expired()) {
+            return;
+          }
+          if (!result) {
+            m_message = result.error();
+          } else if (deleteFiles && !folder.empty()) {
+            std::error_code error;
+            // The base of linked clones is kept read-only.
+            for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
+              std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, error);
+            }
+            std::filesystem::remove_all(folder, error);
+            if (error) {
+              m_message = std::format("{} could not be deleted: {}", folder, error.message());
+            }
+          }
+          requestUpdate();
+        });
+      }
+  );
+}
+
 void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
   const Machine* machine = currentMachine();
   if (!machine || m_creating) {
@@ -433,7 +498,7 @@ void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
     }
     runInThread<std::expected<VmConfig, std::string>>(
         [plan = *plan, folder] { return runClone(plan, folder); },
-        [this, alive, failed](std::expected<VmConfig, std::string> config) {
+        [this, alive, failed, plan = *plan, folder](std::expected<VmConfig, std::string> config) {
           if (alive.expired()) {
             return;
           }
@@ -442,7 +507,7 @@ void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
             failed(config.error());
             return;
           }
-          define(*config);
+          define(*config, [plan, folder] { undoClone(plan, folder); });
         }
     );
   });
@@ -583,7 +648,7 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
   static const std::pair<const char*, Call> kPower[] = {
       {"start", &Hypervisor::start},        {"shutdown", &Hypervisor::shutDown}, {"force-off", &Hypervisor::forceOff},
       {"reset", &Hypervisor::reset},        {"pause", &Hypervisor::pause},       {"resume", &Hypervisor::resume},
-      {"suspend", &Hypervisor::saveState},  {"remove", &Hypervisor::remove},
+      {"suspend", &Hypervisor::saveState},
   };
   for (const auto& [action, call] : kPower) {
     if (name == action) {
@@ -637,6 +702,13 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     } else {
       m_services.hypervisor.deleteSnapshot(m_current, parameter, done);
     }
+  } else if (name == "delete" || name == "forget") {
+    // delete: with the machine's own folder; forget: only out of the library.
+    const Machine* machine = machineFor(parameter);
+    if (!machine) {
+      return false;
+    }
+    removeMachine(machine->uuid, name == "delete");
   } else if (name == "clone" || name == "clone-linked") {
     cloneMachine(parameter, name == "clone-linked");
   } else if (name == "set") {
@@ -892,6 +964,7 @@ void coffret::MainWindow::build() {
             requestUpdate();
           },
       .clone = [this](std::string name, bool linked) { cloneMachine(name, linked); },
+      .remove = [this](bool deleteFiles) { removeMachine(m_current, deleteFiles); },
       .changed = [this] { requestUpdate(); },
   });
   m_machinePage = page.get();

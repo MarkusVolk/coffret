@@ -27,6 +27,8 @@ namespace coffret {
       std::function<void(std::string name)> deleteSnapshot;
       // A second machine made from this one; linked: sharing what does not differ.
       std::function<void(std::string name, bool linked)> clone;
+      // Out of the library; deleteFiles: with the machine's own folder and the disks in it.
+      std::function<void(bool deleteFiles)> remove;
       // Something on the page changed and wants a new layout.
       std::function<void()> changed;
     };
@@ -78,5 +80,9 @@ namespace coffret {
     Button* m_clone = nullptr;
     Label* m_cloneNote = nullptr;
     bool m_linked = false;
+    Flex* m_removeRow = nullptr;
+    bool m_removeAsked = false;
+    bool m_removeStale = true;
+    void rebuildRemove();
   };
 } // namespace coffret
