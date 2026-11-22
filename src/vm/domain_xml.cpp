@@ -285,9 +285,12 @@ namespace {
     std::vector<xml_node> kept(config.disks.size());
     // A disk that stays keeps its element, and with it its address in the guest.
     for (std::size_t i = 0; i < config.disks.size(); ++i) {
+      const coffret::Disk& disk = config.disks[i];
       for (xml_node& node : existing) {
-        if (node && config.disks[i].path == node.child("source").attribute("file").value()
-            && std::string_view(busName(config.disks[i].bus)) == node.child("target").attribute("bus").value()) {
+        // A drive stays the same drive whatever is in it, or nothing.
+        const bool same = disk.cdrom ? std::string_view(node.attribute("device").value()) == "cdrom"
+                                     : disk.path == node.child("source").attribute("file").value();
+        if (node && same && std::string_view(busName(disk.bus)) == node.child("target").attribute("bus").value()) {
           kept[i] = node;
           usedTargets.insert(node.child("target").attribute("dev").value());
           node = xml_node();
@@ -312,12 +315,15 @@ namespace {
         node = last ? devices.insert_child_after("disk", last) : devices.prepend_child("disk");
         last = node;
         setAttribute(node, "type", "file");
-        setAttribute(ensure(node, "source"), "file", disk.path);
         xml_node target = ensure(node, "target");
         setAttribute(target, "dev", freeTarget(disk.bus, usedTargets));
         setAttribute(target, "bus", busName(disk.bus));
       }
       setAttribute(node, "device", disk.cdrom ? "cdrom" : "disk");
+      // An empty drive has no source at all; libvirt refuses an empty one.
+      if (xml_node source = present(node, "source", !disk.path.empty())) {
+        setAttribute(source, "file", disk.path);
+      }
       xml_node driver = ensure(node, "driver");
       setAttribute(driver, "name", "qemu");
       setAttribute(driver, "type", disk.cdrom ? "raw" : disk.format);

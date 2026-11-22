@@ -155,6 +155,14 @@ int main() {
   CHECK(!has(*updated, "<loader"));
   CHECK((*coffret::readDomainXml(*updated) == *existing));
 
+  // An ejected medium leaves the drive where it is, without a source.
+  coffret::VmConfig ejected = *existing;
+  ejected.disks.back().path.clear();
+  const auto empty = coffret::updateDomainXml(*updated, ejected, environment);
+  CHECK(empty.has_value() && !has(*empty, "tools.iso") && has(*empty, "<target dev=\"sda\" bus=\"sata\""));
+  CHECK(empty->find("file=\"\"") == std::string::npos);
+  CHECK((coffret::readDomainXml(*empty)->disks.back().path.empty()));
+
   // Without 3D the device libvirt chose for 3D goes too, or libvirt refuses the machine.
   const std::string chosen = R"(<domain type='kvm'><name>a</name><devices>
     <graphics type='dbus' p2p='yes'><gl enable='yes' rendernode='/dev/dri/renderD129'/></graphics>
