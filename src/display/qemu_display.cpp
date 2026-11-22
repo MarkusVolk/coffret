@@ -414,6 +414,7 @@ void coffret::QemuDisplay::Impl::clipboardCall(const char* method, GVariant* par
     g_free(list);
     g_variant_unref(mimes);
     g_dbus_method_invocation_return_value(invocation, nullptr);
+    kLog.debug("the guest grabs selection {} (serial {}, text {})", selection, serial, text);
     if (selection != 0 || !text) {
       return;
     }
@@ -426,8 +427,11 @@ void coffret::QemuDisplay::Impl::clipboardCall(const char* method, GVariant* par
         G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
         [](GObject* source, GAsyncResult* result, gpointer data) {
           auto* self = static_cast<Impl*>(data);
-          GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, nullptr);
+          GError* error = nullptr;
+          GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
           if (!reply) {
+            kLog.debug("the guest's clipboard cannot be read: {}", error ? error->message : "no reply");
+            g_clear_error(&error);
             return;
           }
           const char* mime = nullptr;
