@@ -113,8 +113,9 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   if (fs::exists(folder, error)) {
     return std::unexpected(std::format("There is a machine folder named {} already.", folder.filename().string()));
   }
-  // Windows 11 installs only with secure boot and a TPM; that firmware comes with the Windows stage.
-  const auto firmware = prepareFirmware(false);
+  // Windows 11 installs only on a firmware that can do secure boot, with a TPM.
+  const bool windows = request.kind == GuestKind::Windows;
+  const auto firmware = prepareFirmware(windows);
   if (!firmware) {
     return std::unexpected(firmware.error());
   }
@@ -132,7 +133,7 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   config.osId = request.osId;
   config.memoryMiB = request.memoryMiB;
   config.cpus = request.cpus;
-  config.firmware = Firmware::Uefi;
+  config.firmware = windows ? Firmware::UefiSecureBoot : Firmware::Uefi;
   config.firmwareCode = firmware->code;
   config.nvramTemplate = firmware->variables;
   config.nvramPath = (folder / "vars.qcow2").string();

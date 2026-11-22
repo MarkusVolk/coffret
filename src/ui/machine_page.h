@@ -73,6 +73,8 @@ namespace coffret {
     Toggle* m_accel = nullptr;
     Toggle* m_sound = nullptr;
     Toggle* m_microphone = nullptr;
+    Toggle* m_tpm = nullptr;
+    Toggle* m_secureBoot = nullptr;
     Toggle* m_clipboard = nullptr;
     Input* m_cdrom = nullptr;
     Input* m_forwards = nullptr;

@@ -20,6 +20,7 @@
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "vm/domain_xml.h"
+#include "vm/firmware_store.h"
 #include "vm/host_info.h"
 #include "vm/machine_factory.h"
 #include "app/worker.h"
@@ -385,10 +386,40 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
   );
 }
 
-void coffret::MainWindow::applySettings(const VmConfig& config) {
+void coffret::MainWindow::applySettings(const VmConfig& wanted) {
   const std::string uuid = m_current;
   m_message.clear();
   std::weak_ptr<int> alive = m_alive;
+  // Secure boot is another build of the firmware: found, and converted the first time, off this thread.
+  const Machine* machine = m_services.hypervisor.find(uuid);
+  if (machine && wanted.firmware != Firmware::Bios && wanted.firmware != machine->config.firmware && !m_firmwareChosen) {
+    const bool secure = wanted.firmware == Firmware::UefiSecureBoot;
+    runInThread<std::expected<FirmwareFiles, std::string>>(
+        [secure] { return prepareFirmware(secure); },
+        [this, alive, wanted, uuid](std::expected<FirmwareFiles, std::string> firmware) {
+          if (alive.expired() || uuid != m_current) {
+            return;
+          }
+          if (!firmware) {
+            m_message = firmware.error();
+            requestUpdate();
+            return;
+          }
+          VmConfig config = wanted;
+          config.firmwareCode = firmware->code;
+          config.nvramTemplate = firmware->variables;
+          if (config.nvramPath.empty()) {
+            const std::string folder = ownFolder(config);
+            config.nvramPath = (std::filesystem::path(folder.empty() ? machineFolder(config.name) : folder) / "vars.qcow2").string();
+          }
+          m_firmwareChosen = true;
+          applySettings(config);
+          m_firmwareChosen = false;
+        }
+    );
+    return;
+  }
+  const VmConfig config = wanted;
   // Into the domain as libvirt has it, so what coffret does not manage stays.
   m_services.hypervisor.xml(uuid, false, [this, alive, config](std::expected<std::string, std::string> xml) {
     if (alive.expired()) {
@@ -867,6 +898,10 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       config.accel3d = value == "on";
     } else if (key == "sound") {
       config.sound = value == "on";
+    } else if (key == "tpm") {
+      config.tpm = value == "on";
+    } else if (key == "secureboot" && config.firmware != Firmware::Bios) {
+      config.firmware = value == "on" ? Firmware::UefiSecureBoot : Firmware::Uefi;
     } else if (key == "microphone") {
       config.microphone = value == "on";
     } else if (key == "forward") {

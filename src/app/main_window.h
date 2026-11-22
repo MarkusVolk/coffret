@@ -183,6 +183,8 @@ namespace coffret {
     std::string m_usbShownFor;
     // The machine whose snapshots the page has.
     std::string m_snapshotsOf;
+    // applySettings() is running again with the firmware it had to look up first.
+    bool m_firmwareChosen = false;
     bool m_listStale = true;
     bool m_tabsStale = true;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);

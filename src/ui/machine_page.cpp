@@ -173,6 +173,30 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
       })
   ));
   page->addChild(field(
+      "TPM 2.0",
+      ui::toggle({
+          .out = &m_tpm,
+          .onChange =
+              [this, edited](bool on) {
+                m_edit.tpm = on;
+                edited();
+              },
+      })
+  ));
+  page->addChild(field(
+      "Secure boot firmware",
+      ui::toggle({
+          .out = &m_secureBoot,
+          .onChange =
+              [this, edited](bool on) {
+                if (m_edit.firmware != Firmware::Bios) {
+                  m_edit.firmware = on ? Firmware::UefiSecureBoot : Firmware::Uefi;
+                }
+                edited();
+              },
+      })
+  ));
+  page->addChild(field(
       "CD/DVD image",
       ui::input({
           .out = &m_cdrom,
@@ -449,6 +473,8 @@ void coffret::MachinePage::fill() {
   m_accel->setCheckedImmediate(m_edit.accel3d);
   m_sound->setCheckedImmediate(m_edit.sound);
   m_microphone->setCheckedImmediate(m_edit.microphone);
+  m_tpm->setCheckedImmediate(m_edit.tpm);
+  m_secureBoot->setCheckedImmediate(m_edit.firmware == Firmware::UefiSecureBoot);
   m_clipboard->setCheckedImmediate(m_edit.clipboard);
   m_forwards->setValue(m_edit.nics.empty() ? "" : formatPortForwards(m_edit.nics.front().forwards));
   const Disk* drive = cdromOf(m_edit);
@@ -580,6 +606,7 @@ void coffret::MachinePage::sync() {
   );
   const bool active = isActive(m_machine.state);
   m_microphone->setEnabled(m_edit.sound);
+  m_secureBoot->setEnabled(m_edit.firmware != Firmware::Bios);
   const bool nat = !m_edit.nics.empty() && m_edit.nics.front().kind == NetworkKind::User;
   m_forwardsNote->setText(
       !nat                                         ? "Ports are forwarded for a machine behind NAT."
