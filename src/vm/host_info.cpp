@@ -1,6 +1,8 @@
 #include "vm/host_info.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <string_view>
 #include <filesystem>
 #include <thread>
 #include <unistd.h>
@@ -31,4 +33,20 @@ unsigned coffret::hostProcessors() { return std::max(1U, std::thread::hardware_c
 unsigned coffret::hostMemoryMiB() {
   const long pages = ::sysconf(_SC_PHYS_PAGES), size = ::sysconf(_SC_PAGE_SIZE);
   return pages > 0 && size > 0 ? static_cast<unsigned>(static_cast<unsigned long long>(pages) * static_cast<unsigned long long>(size) >> 20) : 0;
+}
+
+std::string coffret::findVirtiofsd() {
+  std::vector<std::string> places{"/usr/libexec/virtiofsd", "/usr/lib/virtiofsd", "/usr/lib/qemu/virtiofsd"};
+  const char* path = std::getenv("PATH");
+  for (std::string_view rest = path ? path : ""; !rest.empty();) {
+    const auto colon = rest.find(':');
+    places.push_back(std::string(rest.substr(0, colon)) + "/virtiofsd");
+    rest = colon == std::string_view::npos ? std::string_view() : rest.substr(colon + 1);
+  }
+  for (const auto& place : places) {
+    if (::access(place.c_str(), X_OK) == 0) {
+      return place;
+    }
+  }
+  return {};
 }

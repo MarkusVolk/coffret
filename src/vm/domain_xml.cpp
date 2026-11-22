@@ -380,7 +380,7 @@ namespace {
     }
   }
 
-  void applyFolders(xml_node devices, const coffret::VmConfig& config) {
+  void applyFolders(xml_node devices, const coffret::VmConfig& config, const coffret::DomainEnvironment& environment) {
     std::vector<xml_node> existing;
     for (xml_node node : devices.children("filesystem")) {
       if (std::string_view(node.child("driver").attribute("type").value()) == "virtiofs") {
@@ -409,6 +409,20 @@ namespace {
       }
       setAttribute(ensure(node, "source"), "dir", folder.path);
       present(node, "readonly", folder.readOnly);
+      if (!environment.virtiofsd.empty()) {
+        setAttribute(ensure(node, "binary"), "path", environment.virtiofsd);
+      }
+      if (environment.uid >= 0 && environment.gid >= 0 && !node.child("idmap")) {
+        xml_node idmap = node.append_child("idmap");
+        const auto map = [&idmap](const char* name, long target) {
+          xml_node entry = idmap.append_child(name);
+          setAttribute(entry, "start", "0");
+          setAttribute(entry, "target", std::to_string(target));
+          setAttribute(entry, "count", "1");
+        };
+        map("uid", environment.uid);
+        map("gid", environment.gid);
+      }
     }
   }
 
@@ -579,7 +593,7 @@ namespace {
     xml_node devices = ensure(domain, "devices");
     applyDisks(devices, config);
     applyNics(devices, config);
-    applyFolders(devices, config);
+    applyFolders(devices, config, environment);
     applyUsb(devices, config);
     applyDisplay(domain, devices, config);
     applySound(devices, config, environment);

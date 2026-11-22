@@ -31,7 +31,7 @@ namespace {
 } // namespace
 
 int main() {
-  const coffret::DomainEnvironment environment{.runtimeDir = "/run/user/1000"};
+  const coffret::DomainEnvironment environment{.virtiofsd = "/usr/bin/virtiofsd", .uid = 1000, .gid = 100, .runtimeDir = "/run/user/1000"};
   const auto config = sample();
   const std::string xml = coffret::buildDomainXml(config, environment);
 
@@ -47,6 +47,8 @@ int main() {
   CHECK(has(xml, "<range start=\"2222\" to=\"22\""));
   CHECK(has(xml, "<audio id=\"1\" type=\"pipewire\" runtimeDir=\"/run/user/1000\""));
   CHECK(has(xml, "<driver type=\"virtiofs\""));
+  CHECK(has(xml, "<binary path=\"/usr/bin/virtiofsd\""));
+  CHECK(has(xml, "<uid start=\"0\" target=\"1000\" count=\"1\"") && has(xml, "<gid start=\"0\" target=\"100\" count=\"1\""));
   CHECK(has(xml, "<vendor id=\"0x1915\""));
   CHECK(has(xml, "<target dev=\"vda\" bus=\"virtio\""));
   CHECK(has(xml, "<target dev=\"sda\" bus=\"sata\""));

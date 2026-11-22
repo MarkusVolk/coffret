@@ -32,10 +32,22 @@
 #include <print>
 #include <sstream>
 #include <stdexcept>
+#include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 namespace {
   const Logger kLog("window");
+
+  // What a domain is told about this session.
+  coffret::DomainEnvironment environment() {
+    static const coffret::DomainEnvironment found = [] {
+      const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+      return coffret::DomainEnvironment{
+          .virtiofsd = coffret::findVirtiofsd(), .uid = ::getuid(), .gid = ::getgid(), .runtimeDir = runtime ? runtime : ""
+      };
+    }();
+    return found;
+  }
   constexpr float kSidebarWidth = 248.0F;
   constexpr float kTabBarHeight = 44.0F;
   constexpr float kToolbarHeight = 48.0F;
@@ -309,7 +321,6 @@ void coffret::MainWindow::importImage(ImageImport request) {
 }
 
 void coffret::MainWindow::define(const VmConfig& config, std::function<void()> undo) {
-  const char* runtime = std::getenv("XDG_RUNTIME_DIR");
   std::weak_ptr<int> alive = m_alive;
   if (!undo) {
     undo = [folder = machineFolder(config.name)] {
@@ -318,7 +329,7 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
     };
   }
   m_services.hypervisor.define(
-      buildDomainXml(config, {.runtimeDir = runtime ? runtime : ""}),
+      buildDomainXml(config, environment()),
       [this, alive, undo = std::move(undo)](std::expected<std::string, std::string> uuid) {
         if (alive.expired()) {
           return;
@@ -349,9 +360,8 @@ void coffret::MainWindow::applySettings(const VmConfig& config) {
     if (alive.expired()) {
       return;
     }
-    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
     const auto updated = xml.and_then([&](const std::string& text) {
-      return updateDomainXml(text, config, {.runtimeDir = runtime ? runtime : ""});
+      return updateDomainXml(text, config, environment());
     });
     if (!updated) {
       m_message = updated.error();
@@ -728,6 +738,12 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       config.accel3d = value == "on";
     } else if (key == "sound") {
       config.sound = value == "on";
+    } else if (key == "share") {
+      // "share=/path:tag"; "share=" shares nothing.
+      config.folders.clear();
+      if (const auto colon = value.rfind(':'); colon != std::string::npos) {
+        config.folders.push_back({value.substr(0, colon), value.substr(colon + 1), false});
+      }
     } else {
       return false;
     }

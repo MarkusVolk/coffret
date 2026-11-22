@@ -180,6 +180,42 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
               },
       })
   ));
+  page->addChild(ui::column({.out = &m_folderRows, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
+  page->addChild(field(
+      "Shared folder",
+      ui::row(
+          {.align = FlexAlign::Center, .gap = Style::spaceSm, .flexGrow = 1.0F},
+          ui::input({.out = &m_folderPath, .placeholder = "A folder of this computer for the guest", .flexGrow = 1.0F}),
+          ui::button({
+              .text = "Add",
+              .glyph = "plus",
+              .variant = ButtonVariant::Outline,
+              .onClick =
+                  [this] {
+                    std::string path = m_folderPath->value();
+                    while (path.size() > 1 && path.back() == '/') {
+                      path.pop_back();
+                    }
+                    if (path.empty() || std::ranges::any_of(m_edit.folders, [&](const SharedFolder& folder) { return folder.path == path; })) {
+                      return;
+                    }
+                    // The guest mounts it by this name: the folder's own, made unique.
+                    std::string base = path.substr(path.rfind('/') + 1);
+                    if (base.empty()) {
+                      base = "share";
+                    }
+                    std::string tag = base;
+                    for (unsigned number = 2; std::ranges::any_of(m_edit.folders, [&](const SharedFolder& folder) { return folder.tag == tag; }); ++number) {
+                      tag = std::format("{}-{}", base, number);
+                    }
+                    m_edit.folders.push_back({path, tag, false});
+                    m_folderPath->setValue("");
+                    m_foldersStale = true;
+                    m_callbacks.changed();
+                  },
+          })
+      )
+  ));
   page->addChild(ui::column({.out = &m_facts, .align = FlexAlign::Stretch, .gap = Style::spaceSm}));
   page->addChild(ui::row(
       {.align = FlexAlign::Center, .gap = Style::spaceMd},
@@ -248,6 +284,32 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
   page->addChild(ui::row({.out = &m_removeRow, .align = FlexAlign::Center, .gap = Style::spaceSm}));
 }
 
+void coffret::MachinePage::rebuildFolders() {
+  clear(m_folderRows);
+  for (const auto& folder : m_edit.folders) {
+    m_folderRows->addChild(field(
+        "Shared folder",
+        ui::row(
+            {.align = FlexAlign::Center, .gap = Style::spaceSm, .flexGrow = 1.0F},
+            text(folder.path, ColorRole::OnSurface),
+            text(std::format("in the guest: mount -t virtiofs {} /mnt", folder.tag), ColorRole::OnSurfaceVariant, Style::fontSizeCaption),
+            ui::button({
+                .glyph = "x",
+                .variant = ButtonVariant::Ghost,
+                .tooltip = "Stop sharing the folder",
+                .onClick =
+                    [this, tag = folder.tag] {
+                      std::erase_if(m_edit.folders, [&tag](const SharedFolder& other) { return other.tag == tag; });
+                      m_foldersStale = true;
+                      m_callbacks.changed();
+                    },
+            })
+        )
+    ));
+  }
+  m_foldersStale = false;
+}
+
 void coffret::MachinePage::rebuildRemove() {
   clear(m_removeRow);
   const bool active = isActive(m_machine.state);
@@ -301,6 +363,7 @@ void coffret::MachinePage::setMachine(const Machine& machine) {
   m_machine = machine;
   if (refill) {
     m_edit = machine.config;
+    m_foldersStale = true;
     fill();
   }
 }
@@ -337,9 +400,6 @@ void coffret::MachinePage::rebuildFacts() {
   }
   for (const auto& nic : config.nics) {
     fact("Network", nic.kind == NetworkKind::Bridge ? std::format("Bridged ({})", nic.bridge) : "NAT");
-  }
-  for (const auto& folder : config.folders) {
-    fact("Shared folder", std::format("{} as {}", folder.path, folder.tag));
   }
   fact(
       "Firmware", config.firmware == Firmware::Bios             ? "BIOS"
@@ -430,6 +490,9 @@ void coffret::MachinePage::sync() {
   }
   if (m_removeStale) {
     rebuildRemove();
+  }
+  if (m_foldersStale) {
+    rebuildFolders();
   }
   const bool active = isActive(m_machine.state);
   const bool dirty = m_edit != m_machine.config;

@@ -84,5 +84,9 @@ namespace coffret {
     bool m_removeAsked = false;
     bool m_removeStale = true;
     void rebuildRemove();
+    void rebuildFolders();
+    Flex* m_folderRows = nullptr;
+    Input* m_folderPath = nullptr;
+    bool m_foldersStale = true;
   };
 } // namespace coffret
