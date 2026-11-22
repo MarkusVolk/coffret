@@ -560,7 +560,7 @@ void coffret::MachinePage::rebuildSnapshots() {
     }
     m_snapshotRows->addChild(std::move(row));
     if (entry.hereAfter) {
-      here(entry.depth + 1);
+      here(entry.hereDepth);
     }
   }
   m_snapshotsStale = false;

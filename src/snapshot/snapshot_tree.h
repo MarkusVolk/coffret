@@ -33,6 +33,8 @@ namespace coffret {
     unsigned depth = 0;
     // "You are here" follows this row: the machine's present state comes from this snapshot.
     bool hereAfter = false;
+    // Where "You are here" goes: in line after the end of a straight line, else one step in.
+    unsigned hereDepth = 0;
   };
 
   // The tree as rows from top to bottom: every snapshot before those taken after it, the older

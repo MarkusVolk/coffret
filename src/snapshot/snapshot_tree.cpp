@@ -5,6 +5,7 @@
 #include <functional>
 #include <pugixml.hpp>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 std::expected<coffret::Snapshot, std::string> coffret::parseSnapshotXml(std::string_view xml) {
@@ -44,27 +45,39 @@ std::vector<coffret::SnapshotRow> coffret::snapshotRows(std::vector<Snapshot> sn
   for (const auto& snapshot : snapshots) {
     names.insert(snapshot.name);
   }
+  std::unordered_map<std::string, unsigned> children;
+  for (const auto& snapshot : snapshots) {
+    if (names.contains(snapshot.parent)) {
+      ++children[snapshot.parent];
+    }
+  }
   std::vector<SnapshotRow> rows;
   std::unordered_set<std::string> placed;
-  const std::function<void(const Snapshot&, unsigned)> place = [&](const Snapshot& snapshot, unsigned depth) {
+  // A straight line of snapshots stays in one column; only a branch moves in. That is safe for the last
+  // branch of a level alone: after it nothing follows that could be taken for its sibling.
+  const std::function<void(const Snapshot&, unsigned, bool)> place = [&](const Snapshot& snapshot, unsigned depth, bool last) {
     // A loop in what libvirt reports must not hang the window.
     if (!placed.insert(snapshot.name).second) {
       return;
     }
-    rows.push_back({snapshot, depth, snapshot.current});
+    const unsigned count = children[snapshot.name];
+    const bool straight = count == 1 && last && !snapshot.current;
+    rows.push_back({snapshot, depth, snapshot.current, count == 0 && last ? depth : depth + 1});
+    unsigned seen = 0;
     for (const auto& child : snapshots) {
       if (child.parent == snapshot.name) {
-        place(child, depth + 1);
+        ++seen;
+        place(child, straight ? depth : depth + 1, straight || seen == count);
       }
     }
   };
   for (const auto& snapshot : snapshots) {
     if (snapshot.parent.empty() || !names.contains(snapshot.parent)) {
-      place(snapshot, 0);
+      place(snapshot, 0, true);
     }
   }
   for (const auto& snapshot : snapshots) {
-    place(snapshot, 0);
+    place(snapshot, 0, true);
   }
   return rows;
 }

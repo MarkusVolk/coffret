@@ -49,6 +49,15 @@ int main() {
   CHECK(rows[3].snapshot.name == "fourth" && rows[3].depth == 2);
   CHECK(rows[4].snapshot.name == "third" && rows[4].depth == 1 && rows[4].hereAfter);
   CHECK(!rows[1].hereAfter);
+  CHECK(rows[4].hereDepth == 1);
+
+  // A straight line stays in one column, also for "You are here" at its end.
+  const auto line = coffret::snapshotRows({snap("a", "", 1), snap("b", "a", 2), snap("c", "b", 3, true)});
+  CHECK(line.size() == 3 && line[0].depth == 0 && line[1].depth == 0 && line[2].depth == 0);
+  CHECK(line[2].hereAfter && line[2].hereDepth == 0);
+  // Gone back in the middle of it: the present branches off there.
+  const auto middle = coffret::snapshotRows({snap("a", "", 1), snap("b", "a", 2, true), snap("c", "b", 3)});
+  CHECK(middle[1].depth == 0 && middle[1].hereDepth == 1 && middle[2].depth == 1);
 
   // Parents that point at each other still give every snapshot one row.
   const auto loop = coffret::snapshotRows({snap("a", "b"), snap("b", "a")});
