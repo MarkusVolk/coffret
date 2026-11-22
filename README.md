@@ -21,8 +21,11 @@ Things to know:
   console keeps its size: asked for another one, it turns its picture off.
 - An unattended installation gives the guest the keyboard layout, language and time zone of this
   computer, a user and a password. coffret boots the installer's kernel with libosinfo's answers
-  in its initrd and boots the disk once the installer is done; for now this works for media whose
-  answers go into the initrd, such as Debian's.
+  in its initrd and boots the disk once the installer is done; this works for media whose answers
+  go into the initrd, such as Debian's. For Windows 10 and 11 coffret writes an autounattend.xml
+  onto a disc of its own: a local account, no online account pages, and Microsoft's generic key
+  for the Pro edition (its KMS client key on volume licensing media), which installs but does not
+  activate. It presses Enter at the first start, as a Windows medium boots only after a key.
 - A Windows machine gets a SATA disk and an Intel e1000e card, which Windows drives without
   extra drivers, a TPM, the firmware that can do secure boot, and no 3D acceleration.
 - A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes

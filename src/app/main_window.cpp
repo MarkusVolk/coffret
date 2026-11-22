@@ -400,7 +400,7 @@ void coffret::MainWindow::importImage(ImageImport request) {
   );
 }
 
-void coffret::MainWindow::define(const VmConfig& config, std::function<void()> undo) {
+void coffret::MainWindow::define(const VmConfig& config, std::function<void()> undo, bool install) {
   std::weak_ptr<int> alive = m_alive;
   if (!undo) {
     undo = [folder = machineFolder(config.name)] {
@@ -410,7 +410,7 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
   }
   m_services.hypervisor.define(
       buildDomainXml(config, environment()),
-      [this, alive, undo = std::move(undo), install = !config.install.kernel.empty()](std::expected<std::string, std::string> uuid) {
+      [this, alive, undo = std::move(undo), install, windows = config.kind == GuestKind::Windows](std::expected<std::string, std::string> uuid) {
         if (alive.expired()) {
           return;
         }
@@ -426,6 +426,9 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
           // Nobody needs to be at an unattended installation, so it begins at once.
           if (install) {
             run("start", *uuid, &Hypervisor::start);
+            if (windows) {
+              pressKeyAtStart(*uuid);
+            }
           }
         } else {
           // What was set up for a machine that does not exist is of no use.
@@ -888,9 +891,10 @@ void coffret::MainWindow::createNew() {
   m_message.clear();
   requestUpdate();
   std::weak_ptr<int> alive = m_alive;
+  const bool unattended = request.unattended.has_value();
   runInThread<std::expected<VmConfig, std::string>>(
       [request = std::move(request)] { return prepareNew(request); },
-      [this, alive](std::expected<VmConfig, std::string> config) {
+      [this, alive, unattended](std::expected<VmConfig, std::string> config) {
         if (alive.expired()) {
           return;
         }
@@ -900,9 +904,22 @@ void coffret::MainWindow::createNew() {
           requestUpdate();
           return;
         }
-        define(*config);
+        define(*config, {}, unattended);
       }
   );
+}
+
+void coffret::MainWindow::pressKeyAtStart(const std::string& uuid) {
+  // The medium asks for a key for five seconds once the firmware is through, which takes a few.
+  m_pressKeyTicks = 30;
+  m_pressKey.startRepeating(std::chrono::milliseconds(700), [this, uuid] {
+    if (Tab* tab = tabOf(uuid); tab && tab->console->ready()) {
+      tab->console->typeKeys({KEY_ENTER});
+    }
+    if (--m_pressKeyTicks == 0) {
+      m_pressKey.stop();
+    }
+  });
 }
 
 void coffret::MainWindow::toggleFullscreen() {

@@ -1,8 +1,10 @@
 #include "osinfo/install_media.h"
 
 #include "osinfo/answer_file.h"
+#include "osinfo/windows_answers.h"
 #include "storage/process.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -62,6 +64,36 @@ namespace {
       }
     }
     g_clear_object(&list);
+    return found;
+  }
+
+  // Windows 10 or 11 for amd64: the edition coffret installs and the language of the image, e.g.
+  // "en-GB"; nullopt for another system.
+  struct WindowsMedium {
+    std::string edition;
+    std::string language;
+    // Volume licensing media (CCSA_...) take other keys than retail ones (CCCOMA_...).
+    bool volume = false;
+  };
+  std::optional<WindowsMedium> windowsMedium(OsinfoMedia* media, OsinfoOs* os) {
+    const char* shortId = osinfo_product_get_short_id(OSINFO_PRODUCT(os));
+    const char* arch = osinfo_media_get_architecture(media);
+    const std::string_view id = shortId ? shortId : "";
+    if ((id != "win11" && id != "win10") || (arch && std::string_view(arch) != "x86_64")) {
+      return std::nullopt;
+    }
+    const char* volumeId = osinfo_media_get_volume_id(media);
+    WindowsMedium found{
+        .edition = id == "win11" ? "Windows 11 Pro" : "Windows 10 Pro",
+        .language = "en-US",
+        .volume = volumeId && std::string_view(volumeId).find("CCSA") != std::string_view::npos,
+    };
+    GList* languages = osinfo_media_get_languages(media);
+    if (languages && languages->data) {
+      found.language = static_cast<const char*>(languages->data);
+      std::replace(found.language.begin(), found.language.end(), '_', '-');
+    }
+    g_list_free(languages);
     return found;
   }
 
@@ -127,10 +159,43 @@ coffret::GuestSetup coffret::hostGuestSetup() {
   return setup;
 }
 
-std::expected<coffret::DirectBoot, std::string>
+namespace {
+  std::expected<coffret::UnattendedFiles, std::string>
+  prepareWindows(const WindowsMedium& medium, const coffret::GuestSetup& setup, const std::string& folder) {
+    namespace fs = std::filesystem;
+    coffret::WindowsAnswers answers;
+    answers.user = setup.user;
+    answers.realName = setup.realName;
+    answers.password = setup.password;
+    answers.computerName = coffret::windowsComputerName(setup.hostname);
+    answers.keyboard = setup.keyboard;
+    answers.language = setup.language;
+    answers.timezone = setup.timezone;
+    answers.imageLanguage = medium.language;
+    answers.edition = medium.edition;
+    answers.productKey = coffret::windowsSetupKey(medium.edition, medium.volume);
+    const fs::path directory = fs::path(folder) / "answers";
+    std::error_code error;
+    fs::create_directories(directory, error);
+    std::ofstream(directory / "autounattend.xml") << coffret::windowsAnswerFile(answers);
+    const fs::path disk = fs::path(folder) / "answers.iso";
+    // Setup looks for autounattend.xml at the root of every drive.
+    if (const auto made = coffret::runCommand(
+            {"xorriso", "-as", "mkisofs", "-quiet", "-J", "-r", "-V", "OEMDRV", "-o", disk.string(), directory.string()}
+        );
+        !made) {
+      return std::unexpected(std::format("The disc with the answers cannot be made: {}", made.error()));
+    }
+    fs::remove_all(directory, error);
+    return coffret::UnattendedFiles{.boot = {}, .answerDisk = disk.string()};
+  }
+} // namespace
+
+std::expected<coffret::UnattendedFiles, std::string>
 coffret::prepareUnattended(const std::string& isoPath, const GuestSetup& setup, const std::string& folder) {
   namespace fs = std::filesystem;
   std::string answers, cmdline, filename, kernelPath, initrdPath;
+  std::optional<WindowsMedium> windows;
   {
     const std::lock_guard lock(databaseMutex());
     OsinfoDb* db = database();
@@ -141,10 +206,14 @@ coffret::prepareUnattended(const std::string& isoPath, const GuestSetup& setup, 
     if (!media) {
       return std::unexpected(std::format("{} is no medium libosinfo knows.", isoPath));
     }
-    OsinfoInstallScript* script = initrdScript(media, os);
+    windows = windowsMedium(media, os);
+    OsinfoInstallScript* script = windows ? nullptr : initrdScript(media, os);
     if (!script) {
       g_object_unref(os);
       g_object_unref(media);
+      if (windows) {
+        return prepareWindows(*windows, setup, folder);
+      }
       return std::unexpected(std::string("This medium cannot be installed without somebody at it."));
     }
     osinfo_install_script_set_preferred_injection_method(script, OSINFO_INSTALL_SCRIPT_INJECTION_METHOD_INITRD);
@@ -202,7 +271,7 @@ coffret::prepareUnattended(const std::string& isoPath, const GuestSetup& setup, 
   if (!out.flush()) {
     return std::unexpected(std::format("{} cannot be written.", initrd.string()));
   }
-  return DirectBoot{.kernel = kernel.string(), .initrd = initrd.string(), .cmdline = cmdline};
+  return UnattendedFiles{.boot = {.kernel = kernel.string(), .initrd = initrd.string(), .cmdline = cmdline}, .answerDisk = {}};
 }
 
 std::optional<coffret::InstallMedia> coffret::detectInstallMedia(const std::string& isoPath) {
@@ -247,7 +316,9 @@ std::optional<coffret::InstallMedia> coffret::detectInstallMedia(const std::stri
     if (list) {
       g_object_unref(list);
     }
-    if (OsinfoInstallScript* script = initrdScript(media, os)) {
+    if (windowsMedium(media, os)) {
+      found.unattended = true;
+    } else if (OsinfoInstallScript* script = initrdScript(media, os)) {
       found.unattended = true;
       g_object_unref(script);
     }

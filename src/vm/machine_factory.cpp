@@ -152,12 +152,15 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
     if (setup.hostname.empty()) {
       setup.hostname = guestHostname(request.name);
     }
-    const auto boot = prepareUnattended(iso.string(), setup, folder.string());
-    if (!boot) {
+    const auto files = prepareUnattended(iso.string(), setup, folder.string());
+    if (!files) {
       fs::remove_all(folder, error);
-      return std::unexpected(boot.error());
+      return std::unexpected(files.error());
     }
-    config.install = *boot;
+    config.install = files->boot;
+    if (!files->answerDisk.empty()) {
+      config.disks.push_back({.path = files->answerDisk, .format = "raw", .bus = DiskBus::Sata, .cdrom = true, .readOnly = true});
+    }
   }
   return config;
 }

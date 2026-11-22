@@ -107,7 +107,10 @@ namespace coffret {
     void setInstallMedia(const std::string& iso);
     void createNew();
     // Defines a machine that was just set up; `undo` takes the setting up back when libvirt refuses it.
-    void define(const VmConfig& config, std::function<void()> undo = {});
+    // `install`: an unattended installation, which starts at once.
+    void define(const VmConfig& config, std::function<void()> undo = {}, bool install = false);
+    // Presses Enter now and then for a while: a Windows medium boots only after a key.
+    void pressKeyAtStart(const std::string& uuid);
     void removeMachine(const std::string& uuid, bool deleteFiles);
     void applySettings(const VmConfig& config);
     void finishInstall(const std::string& uuid);
@@ -185,6 +188,8 @@ namespace coffret {
     GuestSetup m_hostSetup;
     // Machines seen running their unattended installation; once one stops, it is booted from its disk.
     std::unordered_set<std::string> m_installing;
+    Timer m_pressKey;
+    unsigned m_pressKeyTicks = 0;
     Flex* m_newInPlaceRow = nullptr;
     Flex* m_newDiskRow = nullptr;
     bool m_newKeepInPlace = false;

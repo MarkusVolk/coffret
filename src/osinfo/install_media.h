@@ -37,9 +37,17 @@ namespace coffret {
   // The user, keyboard, language and time zone of this computer; no password.
   GuestSetup hostGuestSetup();
 
-  // Writes the installer's answers for the medium and its kernel and initrd, with the answers in
-  // it, into `folder`, and says how to boot them. Runs xorriso: for worker threads.
-  std::expected<DirectBoot, std::string>
+  // What an unattended installation adds to the machine: the installer's kernel to boot with the
+  // answers in its initrd (Debian), or a disc with the answers that the installer finds by
+  // itself (Windows).
+  struct UnattendedFiles {
+    DirectBoot boot;
+    std::string answerDisk;
+  };
+
+  // Writes the installer's answers for the medium into `folder`, as one of the two. Runs xorriso:
+  // for worker threads.
+  std::expected<UnattendedFiles, std::string>
   prepareUnattended(const std::string& isoPath, const GuestSetup& setup, const std::string& folder);
 
   // Looks at an ISO image; nullopt for one libosinfo does not know. Reads the database on first
