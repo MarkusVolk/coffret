@@ -4,9 +4,21 @@ Virtual machines for the Noctalia desktop: a replacement for GNOME Boxes that ai
 of VMware Workstation, on QEMU/KVM and libvirt. It draws with Noctalia's UI library, without GTK or
 Qt, and follows the Noctalia colour scheme.
 
-Coffret is young. What is there: the library of the machines of the user's own libvirt
-(`qemu:///session`), a tab per machine with its summary and its console, power controls, and
-machines made from an existing disk image. See [CREDITS.md](CREDITS.md) for what it builds on.
+What is there: the library of the machines of the user's own libvirt (`qemu:///session`); a tab
+per machine with its console or its page; power controls; new machines from an installation medium
+(recognised through libosinfo) or from a disk image such as a cloud image or a Yocto `.wic`;
+hardware settings, shared folders, port forwards; snapshots as a tree; full and linked clones;
+the clipboard; USB devices of the host. See [CREDITS.md](CREDITS.md) for what it builds on.
+
+Things to know:
+
+- With 3D acceleration QEMU cannot save a running machine, so such a machine is neither suspended
+  nor snapshotted while it runs; snapshots are taken while it is off.
+- Clipboard and the guest following the window's size need `spice-vdagent` in the guest. With
+  GNOME on Wayland in the guest, text goes from the guest to the host only.
+- A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Files belong to
+  the user on the host; of the guest's users only root is mapped so far.
+- A USB device can only be given to a machine by a user who may open it under `/dev/bus/usb`.
 
 ## Build
 
@@ -43,13 +55,22 @@ A running Coffret takes named actions on `org.freedesktop.Application`; `coffret
 
 | Action | Parameter | |
 | --- | --- | --- |
-| `open`, `home`, `close-tab` | machine | tabs |
+| `open`, `home`, `close-tab`, `details` | machine | tabs; `details` shows the page of a running machine |
 | `start`, `shutdown`, `force-off`, `reset`, `pause`, `resume`, `suspend` | machine | power |
-| `remove` | machine | forgets the machine; its disks stay |
+| `new` | file | the page for a new machine, with an ISO or a disk image |
+| `create`, `create-in-place` | | makes the machine of that page; in place: a disk image is not copied |
 | `import` | `image[|name[|cdrom]]` | a machine from a disk image, as a copy |
 | `define` | file | a libvirt domain from its XML |
+| `set` | `memory=4096`, `cpus=4`, `3d=on`, `sound=off`, `microphone=on`, `forward=tcp:2222:22`, `share=/path:name` | one setting of the shown machine |
+| `snapshot`, `revert`, `delete-snapshot` | name | snapshots of the shown machine |
+| `clone`, `clone-linked` | name | a copy of the shown machine |
+| `delete`, `forget` | machine | removes it with its own folder, or only out of the library |
+| `usb`, `usb-off` | `vendor:product` | gives a USB device to the shown machine or takes it back |
+| `clipboard` | text | as if the host had copied the text |
 | `search` | text | filters the library |
 | `fullscreen`, `grab`, `release` | | the console |
 | `key` | Linux key codes, `29+56+111` | pressed in this order, released in reverse |
+| `click` | `x,y` | a click at a place of the guest's screen |
 | `size` | `1280x800` | asks the guest for a resolution |
+| `shot` | file | the guest's picture as a PPM file |
 | `state` | | prints connection, machines, tabs and the console's display path and frame rate |
