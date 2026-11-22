@@ -45,6 +45,7 @@ gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 nlohmann_json = dependency('nlohmann_json')
 pugixml = dependency('pugixml')
+libvirt = dependency('libvirt', version: '>=9.10')
 egl = dependency('egl')
 glesv2 = dependency('glesv2')
 
@@ -80,10 +81,13 @@ core_lib = static_library('coffret-core',
     'src/display/frame_store.cpp',
     'src/fs/xdg_dirs.cpp',
     'src/input/linux_to_qnum.c',
+    'src/snapshot/snapshot_tree.cpp',
+    'src/storage/disk_image.cpp',
+    'src/vm/clone_plan.cpp',
     'src/vm/domain_xml.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [glib, pugixml],
+  dependencies: [glib, pugixml, nlohmann_json],
 )
 core_dep = declare_dependency(link_with: core_lib, include_directories: src_inc, dependencies: [glib, pugixml])
 

@@ -2,6 +2,8 @@
 
 #include "app/console_window.h"
 #include "app/instance_service.h"
+#include "app/main_window.h"
+#include "libvirt/hypervisor.h"
 #include "app/main_loop.h"
 #include "app/palette_watcher.h"
 #include "coffret_build_info.h"
@@ -100,10 +102,6 @@ int coffret::runApplication(const Launch& launch) {
       return EXIT_SUCCESS;
     }
   }
-  if (launch.qmpSocket.empty()) {
-    std::println(stderr, "coffret: the library window is not built yet; use --qmp SOCKET for a console");
-    return EXIT_FAILURE;
-  }
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
     return modifiers == 0 && KeySymbol::isEnter(sym);
@@ -135,11 +133,24 @@ int coffret::runApplication(const Launch& launch) {
     PaletteWatcher palette;
     AnimationManager animations;
 
-    {
-      ConsoleWindow window(
-          {.connection = connection, .renderer = renderer, .animations = animations, .keyboard = keyboard, .grab = grab},
-          launch.qmpSocket
-      );
+    DeferredCallPollSource deferred;
+    TimerPollSource timers;
+    KeyRepeatPollSource repeat(connection);
+    const auto runLoop = [&](auto& window) {
+      MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &textures}, [&window] {
+        if (g_stopRequested && window.running()) {
+          window.close();
+        }
+        return window.running();
+      });
+      loop.run();
+      instance.release();
+      keyboard.setHandlers({}, {});
+      connection.setPointerEventCallback({});
+      connection.setKeyboardEventCallback({});
+      connection.setKeyboardFocusCallback({});
+    };
+    const auto handle = [&](auto& window) {
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
         if (!request.action.empty() && !window.action(request.action, request.parameter)) {
           std::println(stderr, "coffret: no action named {}", request.action);
@@ -152,6 +163,11 @@ int coffret::runApplication(const Launch& launch) {
         desktop.pointer(event);
         window.pointer(event);
       });
+    };
+
+    if (!launch.qmpSocket.empty()) {
+      ConsoleWindow window({.connection = connection, .renderer = renderer, .animations = animations, .grab = grab}, launch.qmpSocket);
+      handle(window);
       // The guest gets the keys as the keyboard sends them; the toolkit's own key events are not used here.
       keyboard.setHandlers(
           [&window](wl_surface* surface, std::uint32_t key, bool pressed) {
@@ -165,20 +181,32 @@ int coffret::runApplication(const Launch& launch) {
             }
           }
       );
-
-      DeferredCallPollSource deferred;
-      TimerPollSource timers;
-      KeyRepeatPollSource repeat(connection);
-      MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &textures}, [&window] {
-        if (g_stopRequested && window.running()) {
-          window.close();
-        }
-        return window.running();
+      runLoop(window);
+    } else {
+      Hypervisor hypervisor;
+      MainWindow window({
+          .connection = connection,
+          .renderer = renderer,
+          .textInput = textInput,
+          .animations = animations,
+          .hypervisor = hypervisor,
+          .grab = grab,
       });
-      loop.run();
-      instance.release();
-      keyboard.setHandlers({}, {});
-      connection.setPointerEventCallback({});
+      handle(window);
+      connection.setKeyboardEventCallback([&window](const KeyboardEvent& event) { window.keyboard(event); });
+      connection.setKeyboardFocusCallback([&window](wl_surface* surface, bool entered) { window.focus(surface, entered); });
+      keyboard.setHandlers(
+          [&window](wl_surface* surface, std::uint32_t key, bool pressed) {
+            if (surface == window.surface()) {
+              window.rawKey(key, pressed);
+            }
+          },
+          {}
+      );
+      if (!launch.action.empty()) {
+        window.action(launch.action, launch.parameter);
+      }
+      runLoop(window);
     }
     renderer.setAsyncTextureCache(nullptr);
     textInput.cleanup();

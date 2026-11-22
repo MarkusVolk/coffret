@@ -247,7 +247,7 @@ bool coffret::QemuDisplay::Impl::connect(std::string& why) {
   readPointerMode();
 
   // QEMU talks to the listener over a connection of its own: one end of a socket pair goes to
-  // QEMU, on the other this side is the D-Bus server.
+  // QEMU, which is the D-Bus server on it although this side has the objects.
   int pair[2];
   if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0) {
     why = "cannot create a socket pair";
@@ -263,8 +263,8 @@ bool coffret::QemuDisplay::Impl::connect(std::string& why) {
     ::close(pair[0]);
     return false;
   }
-  // QEMU answers first and then connects, and it waits for this side's handshake while it does:
-  // the call must be on its way before the handshake blocks here.
+  // QEMU answers first and then waits for this side's handshake on the new connection: the call
+  // must be on its way before the handshake blocks here.
   g_dbus_connection_call_with_unix_fd_list(
       connection, nullptr, kConsolePath, "org.qemu.Display1.Console", "RegisterListener", g_variant_new("(h)", index), nullptr,
       G_DBUS_CALL_FLAGS_NONE, -1, fds, nullptr, nullptr, nullptr
@@ -272,15 +272,13 @@ bool coffret::QemuDisplay::Impl::connect(std::string& why) {
   g_object_unref(fds);
   g_dbus_connection_flush_sync(connection, nullptr, nullptr);
 
-  char* guid = g_dbus_generate_guid();
   listener = connectionFor(
-      pair[0], guid,
+      pair[0], nullptr,
       static_cast<GDBusConnectionFlags>(
-          G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_SERVER | G_DBUS_CONNECTION_FLAGS_DELAY_MESSAGE_PROCESSING
+          G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_DELAY_MESSAGE_PROCESSING
       ),
       &error
   );
-  g_free(guid);
   if (!listener) {
     why = std::string("QEMU did not connect to the listener: ") + error->message;
     g_error_free(error);

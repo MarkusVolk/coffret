@@ -289,11 +289,18 @@ void coffret::ConsoleNode::draw(RenderBackend& backend, const CustomDrawContext&
         kLog.warn("{}", problem);
       }
       m_stats.path = problem.empty() ? "dmabuf" : "dmabuf failed: " + problem;
+      kLog.debug(
+          "dmabuf {}x{} of {}x{} at {},{} fourcc {:#x} modifier {:#x} planes {} y0_top {}", scanout.width, scanout.height,
+          scanout.backingWidth, scanout.backingHeight, scanout.x, scanout.y, scanout.fourcc, scanout.modifier,
+          scanout.planes.size(), scanout.y0Top
+      );
     }
     const float bw = static_cast<float>(std::max(1U, scanout.backingWidth)), bh = static_cast<float>(std::max(1U, scanout.backingHeight));
     uv = {static_cast<float>(scanout.x) / bw, static_cast<float>(scanout.y) / bh,
           static_cast<float>(scanout.x + scanout.width) / bw, static_cast<float>(scanout.y + scanout.height) / bh};
-    if (!scanout.y0Top) {
+    // QEMU's y0_top is about a GL consumer, whose origin is at the bottom. Drawn from the top down
+    // as here it is the other way round: with virgl y0_top is false and the first row is the top.
+    if (scanout.y0Top) {
       uv[1] = 1.0F - uv[1];
       uv[3] = 1.0F - uv[3];
     }

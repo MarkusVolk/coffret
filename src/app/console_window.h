@@ -1,16 +1,13 @@
 #pragma once
 
-#include "core/timer_manager.h"
-#include "display/frame_store.h"
-#include "display/qemu_display.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/console_view.h"
 
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_set>
+#include <vector>
 
 class AnimationManager;
 class Label;
@@ -19,76 +16,49 @@ class WaylandConnection;
 struct PointerEvent;
 
 namespace coffret {
-  class ConsoleNode;
   class InputGrab;
-  class RawKeyboard;
 
-  // A window that is nothing but the console of one QEMU, attached over its QMP socket. The first
-  // user of the display code, and the way to look at a guest that was started by hand.
+  // A window that is nothing but the console of one QEMU, attached over its QMP socket: the way to
+  // look at a guest that was started by hand.
   class ConsoleWindow {
   public:
     struct Services {
       WaylandConnection& connection;
       RenderContext& renderer;
       AnimationManager& animations;
-      RawKeyboard& keyboard;
       InputGrab& grab;
     };
 
     ConsoleWindow(Services services, std::string qmpSocket);
-    ~ConsoleWindow();
     ConsoleWindow(const ConsoleWindow&) = delete;
     ConsoleWindow& operator=(const ConsoleWindow&) = delete;
 
-    // Runs a named action ("fullscreen", "keys", "state", ...); false when there is none of that name.
+    // Runs a named action ("fullscreen", "key", "state", ...); false when there is none of that name.
     bool action(const std::string& name, const std::string& parameter);
     bool running() const { return m_surface.isRunning(); }
     void close() { m_surface.close(); }
     wl_surface* surface() const { return m_surface.wlSurface(); }
 
-    void pointer(const PointerEvent& event);
-    void key(std::uint32_t evdev, bool pressed);
-    // The window lost the keyboard: the guest lets go of it too.
-    void focusLost();
+    void pointer(const PointerEvent& event) { m_console.pointer(event); }
+    void key(std::uint32_t evdev, bool pressed) { m_console.key(evdev, pressed); }
+    void focusLost() { m_console.focusLost(); }
 
   private:
     void attach();
     void prepare();
     void build();
-    void requestGuestSize();
-    void requestUpdate();
-    std::string describe() const;
-    // Hands keyboard and mouse to the guest, until Ctrl+Alt or until the window loses the keyboard.
-    void grab();
-    void release();
-    void sendKey(std::uint32_t evdev, bool pressed);
 
     Services m_services;
     std::string m_qmpSocket;
     WindowSurface m_surface;
     InputDispatcher m_dispatcher;
+    ConsoleView m_console;
     std::unique_ptr<Node> m_root;
-    ConsoleNode* m_console = nullptr;
     Label* m_status = nullptr;
-
-    std::shared_ptr<FrameStore> m_frames;
-    std::unique_ptr<QemuDisplay> m_display;
     std::string m_problem;
-    bool m_ready = false;
-    // The size last asked of the guest, in guest pixels.
-    std::uint32_t m_askedWidth = 0, m_askedHeight = 0;
-    Timer m_resizeTimer;
-    Timer m_statusTimer;
-    std::uint64_t m_framesAtLastStatus = 0;
-    std::chrono::steady_clock::time_point m_lastStatus{};
-    double m_fps = 0.0;
-    bool m_grabbed = false;
-    // Ctrl and Alt are down with nothing else pressed since: letting one go releases the grab.
-    bool m_chordArmed = false;
-    // Keys whose press went to the guest; their release follows even after the grab ended.
-    std::unordered_set<std::uint32_t> m_keysDown;
-    // Movement of a locked pointer not yet sent, as the guest takes whole steps only.
-    double m_pendingDx = 0.0, m_pendingDy = 0.0;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
   };
+
+  // Linux key codes from "29+56+111" or "29,56,111".
+  std::vector<std::uint32_t> parseKeys(const std::string& text);
 } // namespace coffret
