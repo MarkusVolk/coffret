@@ -13,6 +13,7 @@
 #include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/stepper.h"
+#include "ui/machine_page.h"
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "vm/domain_xml.h"
@@ -66,34 +67,6 @@ namespace {
 
   std::string memoryText(unsigned mib) {
     return mib % 1024 == 0 ? std::format("{} GiB", mib / 1024) : std::format("{} MiB", mib);
-  }
-
-  // What a machine is made of, as rows of a name and a value.
-  std::vector<std::pair<std::string, std::string>> hardwareOf(const coffret::VmConfig& config) {
-    using namespace coffret;
-    std::vector<std::pair<std::string, std::string>> rows;
-    rows.emplace_back("Memory", memoryText(config.memoryMiB));
-    rows.emplace_back("Processors", std::to_string(config.cpus));
-    for (const auto& disk : config.disks) {
-      rows.emplace_back(disk.cdrom ? "CD/DVD" : "Hard disk", std::format("{} ({})", disk.path.empty() ? "empty" : disk.path, toString(disk.bus)));
-    }
-    for (const auto& nic : config.nics) {
-      rows.emplace_back("Network", nic.kind == NetworkKind::Bridge ? std::format("Bridged ({})", nic.bridge) : "NAT");
-    }
-    for (const auto& folder : config.folders) {
-      rows.emplace_back("Shared folder", std::format("{} as {}", folder.path, folder.tag));
-    }
-    rows.emplace_back("Display", config.accel3d ? (config.venus ? "3D acceleration with Vulkan" : "3D acceleration") : "No 3D acceleration");
-    rows.emplace_back("Sound", config.sound ? "On" : "Off");
-    rows.emplace_back(
-        "Firmware", config.firmware == Firmware::Bios             ? "BIOS"
-                    : config.firmware == Firmware::UefiSecureBoot ? "UEFI with secure boot"
-                                                                  : "UEFI"
-    );
-    if (config.tpm) {
-      rows.emplace_back("TPM", "2.0");
-    }
-    return rows;
   }
 
   void show(Node* node, bool visible) {
@@ -169,7 +142,7 @@ const coffret::Machine* coffret::MainWindow::machineFor(const std::string& text)
 coffret::ConsoleView* coffret::MainWindow::shownConsole() {
   Tab* tab = currentTab();
   const Machine* machine = currentMachine();
-  return tab && machine && isActive(machine->state) ? tab->console.get() : nullptr;
+  return tab && machine && isActive(machine->state) && !tab->details ? tab->console.get() : nullptr;
 }
 
 void coffret::MainWindow::machinesChanged() {
@@ -362,6 +335,59 @@ void coffret::MainWindow::define(const VmConfig& config) {
   );
 }
 
+void coffret::MainWindow::applySettings(const VmConfig& config) {
+  const std::string uuid = m_current;
+  m_message.clear();
+  std::weak_ptr<int> alive = m_alive;
+  // Into the domain as libvirt has it, so what coffret does not manage stays.
+  m_services.hypervisor.xml(uuid, false, [this, alive, config](std::expected<std::string, std::string> xml) {
+    if (alive.expired()) {
+      return;
+    }
+    const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+    const auto updated = xml.and_then([&](const std::string& text) {
+      return updateDomainXml(text, config, {.runtimeDir = runtime ? runtime : ""});
+    });
+    if (!updated) {
+      m_message = updated.error();
+      requestUpdate();
+      return;
+    }
+    m_services.hypervisor.define(*updated, [this, alive](std::expected<std::string, std::string> uuid) {
+      if (!alive.expired()) {
+        m_message = uuid ? "" : uuid.error();
+        requestUpdate();
+      }
+    });
+  });
+}
+
+void coffret::MainWindow::loadSnapshots() {
+  const std::string uuid = m_current;
+  m_snapshotsOf = uuid;
+  std::weak_ptr<int> alive = m_alive;
+  m_services.hypervisor.snapshots(uuid, [this, alive, uuid](std::expected<std::vector<Snapshot>, std::string> snapshots) {
+    if (alive.expired() || uuid != m_current) {
+      return;
+    }
+    m_machinePage->setBusy(false);
+    m_machinePage->setSnapshots(snapshots ? std::move(*snapshots) : std::vector<Snapshot>());
+    if (!snapshots) {
+      m_message = snapshots.error();
+    }
+    requestUpdate();
+  });
+}
+
+void coffret::MainWindow::snapshotDone(Hypervisor::Result result) {
+  m_message = result ? "" : result.error();
+  if (!result) {
+    kLog.warn("snapshot: {}", result.error());
+  }
+  loadSnapshots();
+  requestUpdate();
+}
+
 void coffret::MainWindow::showNew(const std::string& iso) {
   if (Tab* old = currentTab()) {
     old->console->setActive(false);
@@ -530,6 +556,48 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     m_query = lower(parameter);
     m_listStale = true;
     requestUpdate();
+  } else if (name == "details") {
+    if (Tab* tab = currentTab()) {
+      tab->details = !tab->details;
+      requestUpdate();
+    }
+  } else if (name == "snapshot" || name == "revert" || name == "delete-snapshot") {
+    if (!currentMachine()) {
+      return false;
+    }
+    const auto done = [this, alive = std::weak_ptr<int>(m_alive)](Hypervisor::Result result) {
+      if (!alive.expired()) {
+        snapshotDone(std::move(result));
+      }
+    };
+    if (name == "snapshot") {
+      m_services.hypervisor.takeSnapshot(m_current, parameter, "", done);
+    } else if (name == "revert") {
+      m_services.hypervisor.revertToSnapshot(m_current, parameter, done);
+    } else {
+      m_services.hypervisor.deleteSnapshot(m_current, parameter, done);
+    }
+  } else if (name == "set") {
+    // "memory=2048", "cpus=4", "3d=off", "sound=off": one setting of the shown machine.
+    const Machine* machine = currentMachine();
+    const auto split = parameter.find('=');
+    if (!machine || split == std::string::npos) {
+      return false;
+    }
+    VmConfig config = machine->config;
+    const std::string key = parameter.substr(0, split), value = parameter.substr(split + 1);
+    if (key == "memory") {
+      config.memoryMiB = static_cast<unsigned>(std::strtoul(value.c_str(), nullptr, 10));
+    } else if (key == "cpus") {
+      config.cpus = static_cast<unsigned>(std::strtoul(value.c_str(), nullptr, 10));
+    } else if (key == "3d") {
+      config.accel3d = value == "on";
+    } else if (key == "sound") {
+      config.sound = value == "on";
+    } else {
+      return false;
+    }
+    applySettings(config);
   } else if (name == "new") {
     showNew(parameter);
   } else if (name == "create") {
@@ -687,7 +755,14 @@ void coffret::MainWindow::build() {
           console->typeKeys({KEY_LEFTCTRL, KEY_LEFTALT, KEY_DELETE});
         }
       }),
-      tool(&m_fullscreenButton, "maximize", "Full screen (F11)", [this] { toggleFullscreen(); })
+      tool(&m_fullscreenButton, "maximize", "Full screen (F11)", [this] { toggleFullscreen(); }),
+      ui::spacer(),
+      tool(&m_detailsButton, "settings", "Settings and snapshots", [this] {
+        if (Tab* tab = currentTab()) {
+          tab->details = !tab->details;
+          requestUpdate();
+        }
+      })
   ));
 
   // Home: every machine with what it is doing.
@@ -721,24 +796,43 @@ void coffret::MainWindow::build() {
   m_homeList->setGap(Style::spaceXs);
   content->addChild(std::move(home));
 
-  // Summary: a machine that is off.
-  auto summary = ui::column({.out = &m_summary, .align = FlexAlign::Stretch, .gap = Style::spaceSm, .padding = Style::spaceLg, .flexGrow = 1.0F});
-  summary->addChild(plainLabel({
-      .out = &m_summaryName,
-      .fontSize = Style::fontSizeHeader,
-      .fontWeight = FontWeight::Bold,
-      .color = colorSpecFromRole(ColorRole::OnSurface),
-      .maxLines = 1,
-      .ellipsize = TextEllipsize::End,
-  }));
-  summary->addChild(plainLabel({
-      .out = &m_summaryState,
-      .fontSize = Style::fontSizeBody,
-      .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-  }));
-  summary->addChild(ui::separator({.spacing = Style::spaceSm}));
-  summary->addChild(ui::column({.out = &m_summaryRows, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
-  content->addChild(std::move(summary));
+  // The machine's page: what it is made of and its snapshots.
+  auto page = std::make_unique<MachinePage>(MachinePage::Callbacks{
+      .apply = [this](VmConfig config) { applySettings(config); },
+      .takeSnapshot =
+          [this](std::string name) {
+            m_machinePage->setBusy(true);
+            m_services.hypervisor.takeSnapshot(m_current, name, "", [this, alive = std::weak_ptr<int>(m_alive)](Hypervisor::Result result) {
+              if (!alive.expired()) {
+                snapshotDone(std::move(result));
+              }
+            });
+            requestUpdate();
+          },
+      .revertTo =
+          [this](std::string name) {
+            m_machinePage->setBusy(true);
+            m_services.hypervisor.revertToSnapshot(m_current, name, [this, alive = std::weak_ptr<int>(m_alive)](Hypervisor::Result result) {
+              if (!alive.expired()) {
+                snapshotDone(std::move(result));
+              }
+            });
+            requestUpdate();
+          },
+      .deleteSnapshot =
+          [this](std::string name) {
+            m_machinePage->setBusy(true);
+            m_services.hypervisor.deleteSnapshot(m_current, name, [this, alive = std::weak_ptr<int>(m_alive)](Hypervisor::Result result) {
+              if (!alive.expired()) {
+                snapshotDone(std::move(result));
+              }
+            });
+            requestUpdate();
+          },
+      .changed = [this] { requestUpdate(); },
+  });
+  m_machinePage = page.get();
+  content->addChild(std::move(page));
 
   // A new machine from an installation medium.
   const auto field = [](const char* name, std::unique_ptr<Node> control) {
@@ -919,7 +1013,7 @@ void coffret::MainWindow::syncPage() {
   }
   const Machine* machine = m_newShown ? nullptr : currentMachine();
   Tab* tab = m_newShown ? nullptr : currentTab();
-  const bool console = tab && machine && isActive(machine->state);
+  const bool console = tab && machine && isActive(machine->state) && !tab->details;
   const bool fullscreen = m_surface.fullscreen() && console;
   for (auto& other : m_tabs) {
     const bool shown = console && other.get() == tab;
@@ -930,7 +1024,14 @@ void coffret::MainWindow::syncPage() {
   show(m_newPage, m_newShown);
   m_newCreate->setEnabled(!m_creating && !m_newName->value().empty() && !m_newMediaPath.empty());
   m_newCreate->setText(m_creating ? "Creating …" : "Create");
-  show(m_summary, machine && !console);
+  show(m_machinePage, machine && !console);
+  if (machine && !console) {
+    m_machinePage->setMachine(*machine);
+    if (m_snapshotsOf != machine->uuid) {
+      loadSnapshots();
+    }
+    m_machinePage->sync();
+  }
   show(m_consoles, console);
   show(m_sidebar, !fullscreen);
   show(m_tabBar, !fullscreen);
@@ -950,18 +1051,8 @@ void coffret::MainWindow::syncPage() {
     m_resetButton->setEnabled(active);
     m_keysButton->setEnabled(console);
     m_fullscreenButton->setEnabled(console);
-    if (!console) {
-      m_summaryName->setText(machine->name);
-      m_summaryState->setText(toString(state));
-      clear(m_summaryRows);
-      for (const auto& [name, value] : hardwareOf(machine->config)) {
-        m_summaryRows->addChild(ui::row(
-            {.align = FlexAlign::Start, .gap = Style::spaceMd},
-            plainLabel({.text = name, .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant), .minWidth = 150.0F}),
-            plainLabel({.text = value, .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurface), .flexGrow = 1.0F})
-        ));
-      }
-    }
+    m_detailsButton->setEnabled(isActive(state));
+    m_detailsButton->setSelected(tab && tab->details && isActive(state));
   }
   std::string status = m_message;
   if (status.empty() && console) {

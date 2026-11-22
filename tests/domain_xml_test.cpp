@@ -152,6 +152,17 @@ int main() {
   CHECK(!has(*updated, "<loader"));
   CHECK((*coffret::readDomainXml(*updated) == *existing));
 
+  // Without 3D the device libvirt chose for 3D goes too, or libvirt refuses the machine.
+  const std::string chosen = R"(<domain type='kvm'><name>a</name><devices>
+    <graphics type='dbus' p2p='yes'><gl enable='yes' rendernode='/dev/dri/renderD129'/></graphics>
+    <video><model type='virtio' heads='1' primary='yes' device='virtio-vga-gl'><acceleration accel3d='yes'/></model></video>
+  </devices></domain>)";
+  auto flat = *coffret::readDomainXml(chosen);
+  CHECK(flat.accel3d);
+  flat.accel3d = false;
+  const auto without = coffret::updateDomainXml(chosen, flat, environment);
+  CHECK(without.has_value() && !has(*without, "virtio-vga-gl") && !has(*without, "<gl") && !has(*without, "accel3d"));
+
   // Taking a disk away removes its element and nothing else.
   existing->disks.erase(existing->disks.begin() + 1);
   const auto fewer = coffret::updateDomainXml(*updated, *existing, environment);

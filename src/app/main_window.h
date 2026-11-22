@@ -27,6 +27,7 @@ struct PointerEvent;
 namespace coffret {
   class FilePortal;
   class InputGrab;
+  class MachinePage;
   struct InstallMedia;
 
   // The window: the library of machines on the left, a tab per opened machine, and for each its
@@ -67,6 +68,8 @@ namespace coffret {
       Node* picture = nullptr;
       // A connection to the display is being opened.
       bool opening = false;
+      // The machine's page is shown although it runs.
+      bool details = false;
       unsigned failures = 0;
       Timer retry;
       std::string displayProblem;
@@ -96,6 +99,9 @@ namespace coffret {
     void setInstallMedia(const std::string& iso);
     void createNew();
     void define(const VmConfig& config);
+    void applySettings(const VmConfig& config);
+    void loadSnapshots();
+    void snapshotDone(Hypervisor::Result result);
     std::string describe() const;
 
     Services m_services;
@@ -122,10 +128,8 @@ namespace coffret {
     Flex* m_home = nullptr;
     Flex* m_homeList = nullptr;
     Label* m_homeEmpty = nullptr;
-    Flex* m_summary = nullptr;
-    Label* m_summaryName = nullptr;
-    Label* m_summaryState = nullptr;
-    Flex* m_summaryRows = nullptr;
+    MachinePage* m_machinePage = nullptr;
+    Button* m_detailsButton = nullptr;
     Flex* m_newPage = nullptr;
     Input* m_newIso = nullptr;
     Label* m_newDetected = nullptr;
@@ -156,6 +160,8 @@ namespace coffret {
     std::vector<std::pair<std::string, std::string>> m_waiting;
     std::string m_query;
     std::string m_message;
+    // The machine whose snapshots the page has.
+    std::string m_snapshotsOf;
     bool m_listStale = true;
     bool m_tabsStale = true;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);

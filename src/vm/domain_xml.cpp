@@ -464,6 +464,8 @@ namespace {
     if (acceleration) {
       setAttribute(acceleration, "accel3d", "yes");
     }
+    // libvirt writes down which of QEMU's devices it took, and that one depends on the 3D setting.
+    model.remove_attribute("device");
     // libvirt has no setting for Vulkan in the guest: it goes to QEMU's device directly.
     const bool venus = config.accel3d && config.venus;
     if (venus) {
