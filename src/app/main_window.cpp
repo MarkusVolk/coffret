@@ -1447,7 +1447,7 @@ void coffret::MainWindow::build() {
                         }}),
             plainLabel({
                 .text = std::format(
-                    "Nobody needs to be at it. The guest gets keyboard {}, language {} and time zone {} of this computer.",
+                    "Nobody needs to be at it. The guest takes this computer's keyboard layout, language and time zone, here {}, {} and {}.",
                     m_hostSetup.keyboard, m_hostSetup.language, m_hostSetup.timezone
                 ),
                 .fontSize = Style::fontSizeCaption,
