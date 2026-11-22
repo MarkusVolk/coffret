@@ -69,6 +69,7 @@ build_config = configuration_data()
 build_config.set_quoted('COFFRET_VERSION', meson.project_version())
 build_config.set_quoted('COFFRET_BUILD_REVISION', get_option('build_revision'))
 build_config.set_quoted('COFFRET_INSTALL_LIBEXECDIR', get_option('prefix') / get_option('libexecdir'))
+build_config.set_quoted('COFFRET_INSTALL_DATADIR', get_option('prefix') / get_option('datadir'))
 build_config.set_quoted('COFFRET_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'coffret/assets')
 build_info = configure_file(
   input: 'src/app/build_info.h.in',

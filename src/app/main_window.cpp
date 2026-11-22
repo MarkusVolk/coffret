@@ -1104,6 +1104,9 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     }
   } else if (name == "unattended") {
     m_newUnattended = parameter != "off";
+  } else if (name == "name" && m_newName) {
+    m_newName->setValue(parameter);
+    m_newNameTyped = true;
   } else if (name == "user" && m_newUser) {
     m_newUser->setValue(parameter);
   } else if (name == "password" && m_newPassword) {

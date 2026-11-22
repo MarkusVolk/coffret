@@ -27,7 +27,11 @@ Things to know:
   for the Pro edition (its KMS client key on volume licensing media), which installs but does not
   activate. It presses Enter at the first start, as a Windows medium boots only after a key.
 - A Windows machine gets a SATA disk and an Intel e1000e card, which Windows drives without
-  extra drivers, a TPM, the firmware that can do secure boot, and no 3D acceleration.
+  extra drivers, a TPM, the firmware that can do secure boot, and no 3D acceleration. With
+  `virtio-win-guest-tools.exe` in `<datadir>/virtio-win`, an unattended installation runs it at
+  the first logon, which brings the SPICE agent for the clipboard; text copied in Windows needs a
+  QEMU that gives clipboard grabs without serials one. Windows does not follow the window's size:
+  its agent and the virtio-gpu driver do not agree on how to set a resolution.
 - A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes
   in the guest, the files belong to the user on the host; in the guest they belong to its first
   user (id 1000).
@@ -78,6 +82,7 @@ A running Coffret takes named actions on `org.freedesktop.Application`; `coffret
 | `start`, `shutdown`, `force-off`, `reset`, `pause`, `resume`, `suspend` | machine | power |
 | `new` | file | the page for a new machine, with an ISO or a disk image |
 | `unattended` | `on`, `off` | installs the machine of that page without anybody at it, or not |
+| `name` | text | the name of the machine of that page |
 | `user`, `password` | text | the user an unattended installation makes |
 | `create`, `create-in-place` | | makes the machine of that page; in place: a disk image is not copied |
 | `finish-install` | machine | boots a machine from its disk whose unattended installation coffret did not see end |

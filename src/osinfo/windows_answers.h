@@ -19,6 +19,9 @@ namespace coffret {
     // The edition to install and a key for it.
     std::string edition = "Windows 11 Pro";
     std::string productKey;
+    // virtio-win-guest-tools.exe lies next to the answers: installed at the first logon, it brings
+    // the virtio drivers, the SPICE agent for clipboard and window size, and the QEMU guest agent.
+    bool guestTools = false;
   };
 
   // An autounattend.xml for Windows 10 and 11 on amd64 with UEFI: the first disk wiped and

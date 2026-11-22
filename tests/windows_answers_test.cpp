@@ -52,5 +52,11 @@ int main() {
   CHECK(std::string_view(shell.child("Password").child_value("Value")) == "a<b&\"c");
   CHECK(xml.find("W. Europe Standard Time") != std::string::npos);
   CHECK(xml.find("W269N-WFGWX-YVC9B-4J6C9-4T9TF") != std::string::npos);
+  CHECK(xml.find("FirstLogonCommands") == std::string::npos);
+  answers.guestTools = true;
+  const std::string withTools = coffret::windowsAnswerFile(answers);
+  pugi::xml_document tools;
+  CHECK(tools.load_string(withTools.c_str()));
+  CHECK(withTools.find("virtio-win-guest-tools.exe /install /quiet") != std::string::npos);
   return 0;
 }

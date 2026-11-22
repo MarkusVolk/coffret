@@ -195,12 +195,21 @@ std::string coffret::windowsAnswerFile(const WindowsAnswers& a) {
         <LogonCount>1</LogonCount>
         <Password><Value>{9}</Value><PlainText>true</PlainText></Password>
       </AutoLogon>
-      <TimeZone>{6}</TimeZone>
+{10}      <TimeZone>{6}</TimeZone>
     </component>
   </settings>
 </unattend>
 )",
       kComponent, escape(ui), international, escape(a.edition), escape(a.productKey), escape(a.computerName), escape(zone), user,
-      escape(a.realName.empty() ? a.user : a.realName), password
+      escape(a.realName.empty() ? a.user : a.realName), password,
+      a.guestTools ? R"(      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>virtio-win guest tools</Description>
+          <CommandLine>cmd /c for %d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do if exist %d:\virtio-win-guest-tools.exe start /wait %d:\virtio-win-guest-tools.exe /install /quiet /norestart</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+)"
+                   : ""
   );
 }
