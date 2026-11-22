@@ -388,6 +388,66 @@ void coffret::MainWindow::snapshotDone(Hypervisor::Result result) {
   requestUpdate();
 }
 
+void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
+  const Machine* machine = currentMachine();
+  if (!machine || m_creating) {
+    return;
+  }
+  if (isActive(machine->state)) {
+    m_message = "A machine can be cloned while it is off.";
+    requestUpdate();
+    return;
+  }
+  if (std::ranges::any_of(m_services.hypervisor.machines(), [&name](const Machine& other) { return other.name == name; })) {
+    m_message = std::format("There is a machine named {} already.", name);
+    requestUpdate();
+    return;
+  }
+  m_creating = true;
+  m_machinePage->setBusy(true);
+  m_message = std::format("Cloning {} …", machine->name);
+  requestUpdate();
+  std::weak_ptr<int> alive = m_alive;
+  const VmConfig source = machine->config;
+  // Whether there are snapshots decides what kind of clone is possible; libvirt knows.
+  m_services.hypervisor.snapshots(machine->uuid, [this, alive, source, name, linked](std::expected<std::vector<Snapshot>, std::string> snapshots) {
+    if (alive.expired()) {
+      return;
+    }
+    const auto failed = [this](const std::string& why) {
+      m_creating = false;
+      m_machinePage->setBusy(false);
+      m_message = why;
+      kLog.warn("clone: {}", why);
+      requestUpdate();
+    };
+    if (!snapshots) {
+      failed(snapshots.error());
+      return;
+    }
+    const std::string folder = machineFolder(name);
+    const auto plan = planClone(source, name, folder, linked, !snapshots->empty());
+    if (!plan) {
+      failed(plan.error());
+      return;
+    }
+    runInThread<std::expected<VmConfig, std::string>>(
+        [plan = *plan, folder] { return runClone(plan, folder); },
+        [this, alive, failed](std::expected<VmConfig, std::string> config) {
+          if (alive.expired()) {
+            return;
+          }
+          m_machinePage->setBusy(false);
+          if (!config) {
+            failed(config.error());
+            return;
+          }
+          define(*config);
+        }
+    );
+  });
+}
+
 void coffret::MainWindow::showNew(const std::string& iso) {
   if (Tab* old = currentTab()) {
     old->console->setActive(false);
@@ -577,6 +637,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     } else {
       m_services.hypervisor.deleteSnapshot(m_current, parameter, done);
     }
+  } else if (name == "clone" || name == "clone-linked") {
+    cloneMachine(parameter, name == "clone-linked");
   } else if (name == "set") {
     // "memory=2048", "cpus=4", "3d=off", "sound=off": one setting of the shown machine.
     const Machine* machine = currentMachine();
@@ -829,6 +891,7 @@ void coffret::MainWindow::build() {
             });
             requestUpdate();
           },
+      .clone = [this](std::string name, bool linked) { cloneMachine(name, linked); },
       .changed = [this] { requestUpdate(); },
   });
   m_machinePage = page.get();

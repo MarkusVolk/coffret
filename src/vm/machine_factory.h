@@ -1,5 +1,6 @@
 #pragma once
 
+#include "vm/clone_plan.h"
 #include "vm/vm_config.h"
 
 #include <cstdint>
@@ -40,6 +41,9 @@ namespace coffret {
   // Sets up the machine's folder and disk and says how to define it. Blocks while the image is
   // copied: for worker threads.
   std::expected<VmConfig, std::string> prepareImport(const ImageImport& request);
+  // Carries out a clone plan for a machine that is off, into a folder that is not there yet, and
+  // undoes what it did when a step fails. Blocks while disks are copied.
+  std::expected<VmConfig, std::string> runClone(const ClonePlan& plan, const std::string& folder);
   // The same for a machine that is installed from a medium. Quick, but runs qemu-img.
   std::expected<VmConfig, std::string> prepareNew(const NewMachine& request);
 } // namespace coffret

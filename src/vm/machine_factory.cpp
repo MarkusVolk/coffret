@@ -145,3 +145,54 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   config.tpm = request.kind == GuestKind::Windows;
   return config;
 }
+
+std::expected<coffret::VmConfig, std::string> coffret::runClone(const ClonePlan& plan, const std::string& folder) {
+  namespace fs = std::filesystem;
+  std::error_code error;
+  if (fs::exists(folder, error)) {
+    return std::unexpected(std::format("There is a machine folder named {} already.", fs::path(folder).filename().string()));
+  }
+  if (!fs::create_directories(folder, error)) {
+    return std::unexpected(std::format("{} cannot be created: {}", folder, error.message()));
+  }
+  std::size_t renamed = 0;
+  // Back to how it was: the clone's folder goes, and the source's disks get their names back.
+  const auto undo = [&](std::string why) -> std::unexpected<std::string> {
+    std::error_code ignored;
+    fs::remove_all(folder, ignored);
+    for (std::size_t index = renamed; index-- > 0;) {
+      const auto& [disk, base] = plan.renames[index];
+      fs::permissions(base, fs::perms::owner_write, fs::perm_options::add, ignored);
+      fs::remove(disk, ignored);
+      fs::rename(base, disk, ignored);
+    }
+    return std::unexpected(std::move(why));
+  };
+  for (const auto& [disk, base] : plan.renames) {
+    if (fs::exists(base, error)) {
+      return undo(std::format("{} is in the way.", base));
+    }
+    fs::rename(disk, base, error);
+    if (error) {
+      return undo(std::format("{} cannot be renamed: {}", disk, error.message()));
+    }
+    ++renamed;
+  }
+  for (const auto& command : plan.commands) {
+    if (const auto done = runCommand(command); !done) {
+      return undo(done.error());
+    }
+  }
+  for (const auto& [from, to] : plan.copies) {
+    if (!fs::exists(from, error)) {
+      continue;
+    }
+    if (const auto done = runCommand(convertImageCommand(from, to)); !done) {
+      return undo(done.error());
+    }
+  }
+  for (const auto& file : plan.readOnly) {
+    fs::permissions(file, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write, fs::perm_options::remove, error);
+  }
+  return plan.clone;
+}

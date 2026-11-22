@@ -102,6 +102,7 @@ namespace coffret {
     void applySettings(const VmConfig& config);
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
+    void cloneMachine(const std::string& name, bool linked);
     std::string describe() const;
 
     Services m_services;

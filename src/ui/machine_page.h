@@ -25,6 +25,8 @@ namespace coffret {
       std::function<void(std::string name)> takeSnapshot;
       std::function<void(std::string name)> revertTo;
       std::function<void(std::string name)> deleteSnapshot;
+      // A second machine made from this one; linked: sharing what does not differ.
+      std::function<void(std::string name, bool linked)> clone;
       // Something on the page changed and wants a new layout.
       std::function<void()> changed;
     };
@@ -71,5 +73,10 @@ namespace coffret {
     Button* m_take = nullptr;
     Label* m_snapshotNote = nullptr;
     Flex* m_snapshotRows = nullptr;
+    Input* m_cloneName = nullptr;
+    Toggle* m_cloneLinked = nullptr;
+    Button* m_clone = nullptr;
+    Label* m_cloneNote = nullptr;
+    bool m_linked = false;
   };
 } // namespace coffret

@@ -212,6 +212,36 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
   ));
   page->addChild(text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_snapshotNote));
   page->addChild(ui::column({.out = &m_snapshotRows, .align = FlexAlign::Stretch, .gap = 2.0F}));
+
+  page->addChild(ui::separator({.spacing = Style::spaceSm}));
+  page->addChild(heading("Clone"));
+  page->addChild(field("Name", ui::input({.out = &m_cloneName, .placeholder = "Name of the new machine", .width = 320.0F})));
+  page->addChild(field(
+      "Linked clone",
+      ui::toggle({
+          .out = &m_cloneLinked,
+          .onChange =
+              [this](bool on) {
+                m_linked = on;
+                m_callbacks.changed();
+              },
+      })
+  ));
+  page->addChild(ui::row(
+      {.align = FlexAlign::Center, .gap = Style::spaceMd},
+      ui::button({
+          .out = &m_clone,
+          .text = "Clone",
+          .glyph = "copy",
+          .variant = ButtonVariant::Outline,
+          .onClick =
+              [this] {
+                const std::string name = m_cloneName->value().empty() ? m_machine.name + " clone" : m_cloneName->value();
+                m_callbacks.clone(name, m_linked);
+              },
+      }),
+      text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_cloneNote)
+  ));
 }
 
 void coffret::MachinePage::setMachine(const Machine& machine) {
@@ -360,6 +390,21 @@ void coffret::MachinePage::sync() {
   m_applyNote->setText(dirty && active ? "Takes effect when the machine is started the next time." : "");
   // QEMU cannot save a running machine whose picture is drawn by the host's GPU.
   const bool blocked = active && m_machine.config.accel3d;
+  // A linked clone turns the disks into a base both machines build on; snapshots would stay behind in it.
+  const bool canLink = m_snapshots.empty();
+  if (!canLink && m_linked) {
+    m_linked = false;
+    m_cloneLinked->setCheckedImmediate(false);
+  }
+  m_cloneLinked->setEnabled(canLink);
+  m_clone->setEnabled(!m_busy && !active);
+  m_clone->setText(m_busy ? "Working …" : "Clone");
+  m_cloneNote->setText(
+      active      ? "A machine can be cloned while it is off."
+      : !canLink  ? "A full copy that stands alone. A linked clone is possible for a machine without snapshots."
+      : m_linked  ? "Made at once and small, but it needs this machine's folder for as long as it lives."
+                  : "A full copy that stands alone."
+  );
   m_take->setEnabled(!m_busy && !blocked);
   m_take->setText(m_busy ? "Working …" : "Take snapshot");
   m_snapshotNote->setText(

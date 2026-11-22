@@ -17,7 +17,8 @@ namespace coffret {
     std::vector<std::pair<std::string, std::string>> renames;
     // qemu-img command lines, in this order, after the renames.
     std::vector<std::vector<std::string>> commands;
-    // Files copied as they are: the firmware's variables.
+    // Images copied whole where they exist, without the snapshots in them: the firmware's
+    // variables, which a machine that never ran does not have yet.
     std::vector<std::pair<std::string, std::string>> copies;
     // Files that must not be written to from then on.
     std::vector<std::string> readOnly;
