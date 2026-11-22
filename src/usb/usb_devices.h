@@ -14,6 +14,8 @@ namespace coffret {
     unsigned device = 0;
     // What it calls itself, e.g. "Logitech USB Receiver"; its ids when it says nothing.
     std::string name;
+    // It says it is a keyboard or a mouse: the host may lose its own input with it.
+    bool input = false;
     bool operator==(const HostUsbDevice&) const = default;
   };
 

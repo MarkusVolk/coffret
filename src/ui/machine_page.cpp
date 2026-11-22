@@ -382,15 +382,41 @@ void coffret::MachinePage::rebuildUsb() {
     auto name = text(device.name, ColorRole::OnSurface);
     name->setMinWidth(320.0F);
     row->addChild(std::move(name));
-    auto ids = text(std::format("{:04x}:{:04x}", device.vendor, device.product), ColorRole::OnSurfaceVariant, Style::fontSizeCaption);
+    auto ids = text(
+        std::format("{:04x}:{:04x}{}", device.vendor, device.product, device.input ? "   ·   keyboard or mouse" : ""),
+        ColorRole::OnSurfaceVariant, Style::fontSizeCaption
+    );
     ids->setFlexGrow(1.0F);
     row->addChild(std::move(ids));
-    row->addChild(ui::button({
-        .text = connected ? "Disconnect" : "Connect",
-        .enabled = active,
-        .variant = connected ? ButtonVariant::Secondary : ButtonVariant::Outline,
-        .onClick = [this, device, connected] { m_callbacks.usb(device, !connected); },
-    }));
+    const auto again = [this](std::optional<HostUsbDevice> ask) {
+      return [this, ask] {
+        m_usbAsk = ask;
+        m_usbStale = true;
+        m_callbacks.changed();
+      };
+    };
+    if (m_usbAsk == device && !connected && active) {
+      row->addChild(text("This computer loses it until the machine lets go.", ColorRole::OnSurfaceVariant, Style::fontSizeCaption));
+      row->addChild(ui::button({
+          .text = "Connect",
+          .variant = ButtonVariant::Primary,
+          .onClick =
+              [this, device] {
+                m_usbAsk.reset();
+                m_usbStale = true;
+                m_callbacks.usb(device, true);
+              },
+      }));
+      row->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = again(std::nullopt)}));
+    } else {
+      row->addChild(ui::button({
+          .text = connected ? "Disconnect" : "Connect",
+          .enabled = active,
+          .variant = connected ? ButtonVariant::Secondary : ButtonVariant::Outline,
+          .onClick = device.input && !connected ? again(device)
+                                                : std::function<void()>([this, device, connected] { m_callbacks.usb(device, !connected); }),
+      }));
+    }
     m_usbRows->addChild(std::move(row));
   }
   m_usbStale = false;

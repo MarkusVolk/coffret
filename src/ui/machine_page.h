@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -101,6 +102,8 @@ namespace coffret {
     Label* m_usbNote = nullptr;
     std::vector<HostUsbDevice> m_usbDevices;
     std::vector<HostUsbDevice> m_usbConnected;
+    // A keyboard or mouse whose Connect waits for a second word.
+    std::optional<HostUsbDevice> m_usbAsk;
     std::chrono::steady_clock::time_point m_usbScanned{};
     bool m_usbStale = true;
     Flex* m_folderRows = nullptr;

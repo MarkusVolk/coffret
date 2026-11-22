@@ -31,10 +31,13 @@ int main() {
   write(root / "2-2/busnum", "2");
   write(root / "2-2/devnum", "12");
   write(root / "1-3:1.0/bInterfaceClass", "03");
+  write(root / "1-3:1.0/bInterfaceSubClass", "01");
+  write(root / "1-3:1.0/bInterfaceProtocol", "02");
+  write(root / "2-2:1.0/bInterfaceClass", "08");
 
   const auto devices = coffret::listUsbDevices(root.string());
   CHECK(devices.size() == 2);
-  CHECK((devices[0] == coffret::HostUsbDevice{0x046d, 0xc548, 1, 3, "Logitech USB Receiver"}));
+  CHECK((devices[0] == coffret::HostUsbDevice{0x046d, 0xc548, 1, 3, "Logitech USB Receiver", true}));
   CHECK((devices[1] == coffret::HostUsbDevice{0x090c, 0x2320, 2, 12, "090c:2320"}));
   CHECK(coffret::usbHostdevXml(devices[1])
         == "<hostdev mode='subsystem' type='usb' managed='yes'><source><vendor id='0x090c'/><product id='0x2320'/>"

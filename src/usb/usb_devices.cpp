@@ -43,6 +43,16 @@ std::vector<coffret::HostUsbDevice> coffret::listUsbDevices(const std::string& s
     if (device.name.empty()) {
       device.name = std::format("{:04x}:{:04x}", device.vendor, device.product);
     }
+    // Its interfaces sit next to it as "1-3:1.0"; HID boot protocol 1 is a keyboard, 2 a mouse.
+    const std::string prefix = path.filename().string() + ":";
+    for (const auto& other : std::filesystem::directory_iterator(sysfs, error)) {
+      const auto& interface = other.path();
+      if (interface.filename().string().starts_with(prefix) && line(interface / "bInterfaceClass") == "03"
+          && line(interface / "bInterfaceSubClass") == "01") {
+        const std::string protocol = line(interface / "bInterfaceProtocol");
+        device.input = device.input || protocol == "01" || protocol == "02";
+      }
+    }
     devices.push_back(std::move(device));
   }
   std::ranges::sort(devices, [](const HostUsbDevice& a, const HostUsbDevice& b) {
