@@ -101,4 +101,6 @@ endif
 
 install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadir') / 'coffret/assets')
 install_data('assets/templates/colors.toml', install_dir: get_option('datadir') / 'coffret/templates')
+install_data('assets/desktop/de.flk.Coffret.desktop', install_dir: get_option('datadir') / 'applications')
+install_data('assets/icons/de.flk.Coffret.svg', install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/coffret')

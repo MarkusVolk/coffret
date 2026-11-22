@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Coffret
+GenericName=Virtual Machines
+Comment=Create and run virtual machines
+Exec=coffret
+Icon=de.flk.Coffret
+Terminal=false
+Categories=System;Emulator;
+Keywords=vm;virtual;machine;qemu;kvm;libvirt;guest;
+StartupWMClass=de.flk.Coffret
