@@ -22,11 +22,19 @@ namespace coffret {
     // virtio-win-guest-tools.exe lies next to the answers: installed at the first logon, it brings
     // the virtio drivers, the SPICE agent for clipboard and window size, and the QEMU guest agent.
     bool guestTools = false;
+    // A folder viogpu3d with viogpu3d.inf lies next to the answers: pnputil installs it at the
+    // first logon, for Direct3D on the host's GPU.
+    bool graphicsDriver = false;
   };
 
   // An autounattend.xml for Windows 10 and 11 on amd64 with UEFI: the first disk wiped and
   // partitioned, a local account in the Administrators group, no online account pages.
   std::string windowsAnswerFile(const WindowsAnswers& answers);
+
+  // PowerShell that installs viogpu3d from `inf` (a PowerShell expression for its path) as the
+  // graphics driver. The guest tools bring viogpudo with a higher version, which Windows would
+  // keep for the same device: it goes first.
+  std::string windowsGraphicsDriverScript(std::string_view inf);
 
   // Windows' names for the host's settings: "0407:00000407" for "de", "en-US" for "en_US",
   // "W. Europe Standard Time" for "Europe/Berlin"; the US layout, en-US and UTC where none is known.

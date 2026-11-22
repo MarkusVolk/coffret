@@ -7,7 +7,15 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <cctype>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <glib.h>
+#include <iterator>
+#include <libvirt/libvirt-qemu.h>
 #include <libvirt/libvirt.h>
+#include <nlohmann/json.hpp>
 #include <libvirt/virterror.h>
 #include <mutex>
 #include <thread>
@@ -499,5 +507,132 @@ void coffret::Hypervisor::define(std::string xml, std::function<void(std::expect
         refresh();
         done(std::move(outcome));
       }
+  );
+}
+
+namespace {
+  // One command of the QEMU guest agent; its "return", or why there is none.
+  std::expected<nlohmann::json, std::string> agent(virDomainPtr domain, const nlohmann::json& command) {
+    char* reply = virDomainQemuAgentCommand(domain, command.dump().c_str(), 60, 0);
+    if (!reply) {
+      return std::unexpected(lastError("The guest agent does not answer."));
+    }
+    nlohmann::json parsed = nlohmann::json::parse(reply, nullptr, false);
+    std::free(reply);
+    if (parsed.is_discarded() || !parsed.contains("return")) {
+      return std::unexpected(std::string("The guest agent gave no answer to read."));
+    }
+    return parsed["return"];
+  }
+
+  std::string base64(const char* data, std::size_t size) {
+    gchar* encoded = g_base64_encode(reinterpret_cast<const guchar*>(data), size);
+    std::string result = encoded;
+    g_free(encoded);
+    return result;
+  }
+
+  std::expected<void, std::string> copyIntoGuest(virDomainPtr domain, const std::filesystem::path& file, const std::string& target) {
+    std::ifstream in(file, std::ios::binary);
+    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto handle = agent(domain, {{"execute", "guest-file-open"}, {"arguments", {{"path", target}, {"mode", "wb"}}}});
+    if (!handle) {
+      return std::unexpected(handle.error());
+    }
+    // The Windows agent stalls on large writes; 64 KiB at a time goes through.
+    constexpr std::size_t kChunk = 1 << 16;
+    for (std::size_t at = 0; at < data.size(); at += kChunk) {
+      const std::size_t size = std::min(kChunk, data.size() - at);
+      const auto written = agent(
+          domain, {{"execute", "guest-file-write"}, {"arguments", {{"handle", *handle}, {"buf-b64", base64(data.data() + at, size)}}}}
+      );
+      if (!written) {
+        agent(domain, {{"execute", "guest-file-close"}, {"arguments", {{"handle", *handle}}}});
+        return std::unexpected(written.error());
+      }
+    }
+    if (const auto closed = agent(domain, {{"execute", "guest-file-close"}, {"arguments", {{"handle", *handle}}}}); !closed) {
+      return std::unexpected(closed.error());
+    }
+    return {};
+  }
+
+  // Runs PowerShell in the guest and waits for it; its output when it fails.
+  std::expected<void, std::string> powershell(virDomainPtr domain, const std::string& script) {
+    std::u16string wide;
+    for (const unsigned char c : script) {
+      wide.push_back(static_cast<char16_t>(c));
+    }
+    const std::string encoded = base64(reinterpret_cast<const char*>(wide.data()), wide.size() * sizeof(char16_t));
+    const auto started = agent(
+        domain,
+        {{"execute", "guest-exec"},
+         {"arguments",
+          {{"path", "powershell.exe"},
+           {"arg", {"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded}},
+           {"capture-output", true}}}}
+    );
+    if (!started) {
+      return std::unexpected(started.error());
+    }
+    const auto pid = (*started)["pid"];
+    for (int i = 0; i < 600; ++i) {
+      const auto status = agent(domain, {{"execute", "guest-exec-status"}, {"arguments", {{"pid", pid}}}});
+      if (!status) {
+        return std::unexpected(status.error());
+      }
+      if (status->value("exited", false)) {
+        if (status->value("exitcode", 1) == 0) {
+          return {};
+        }
+        std::string output;
+        for (const char* key : {"out-data", "err-data"}) {
+          if (status->contains(key)) {
+            gsize size = 0;
+            guchar* decoded = g_base64_decode((*status)[key].get<std::string>().c_str(), &size);
+            output.append(reinterpret_cast<const char*>(decoded), size);
+            g_free(decoded);
+          }
+        }
+        // The last line says what went wrong; PowerShell's progress records only clutter it.
+        if (const auto clixml = output.find("#< CLIXML"); clixml != std::string::npos) {
+          output.erase(clixml);
+        }
+        while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
+          output.pop_back();
+        }
+        if (const auto line = output.find_last_of('\n'); line != std::string::npos) {
+          output.erase(0, line + 1);
+        }
+        return std::unexpected(output.empty() ? std::string("Windows reports an error.") : std::format("Windows: {}", output));
+      }
+      usleep(500 * 1000);
+    }
+    return std::unexpected(std::string("Windows did not finish in five minutes."));
+  }
+} // namespace
+
+void coffret::Hypervisor::runInWindows(const std::string& uuid, const std::string& folder, const std::string& script, Done done) {
+  run<void>(
+      uuid,
+      [folder, script](virDomainPtr domain) -> Result {
+        // A folder of its own each time: a handle the agent kept from a broken run blocks the file.
+        const std::string target = std::format(
+            R"(C:\Windows\Temp\coffret-{}-{})", std::filesystem::path(folder).filename().string(), g_get_real_time() / 1000000
+        );
+        if (const auto made = powershell(domain, std::format("New-Item -ItemType Directory -Force -Path '{}' | Out-Null", target)); !made) {
+          return made;
+        }
+        std::error_code error;
+        for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
+          if (entry.is_regular_file()) {
+            if (const auto copied = copyIntoGuest(domain, entry.path(), target + "\\" + entry.path().filename().string()); !copied) {
+              return copied;
+            }
+          }
+        }
+        return powershell(domain, std::format("$folder = '{}'; {}", target, script));
+      },
+      std::move(done)
   );
 }

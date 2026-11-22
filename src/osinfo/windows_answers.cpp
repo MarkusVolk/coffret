@@ -4,6 +4,7 @@
 #include <array>
 #include <format>
 #include <utility>
+#include <vector>
 
 namespace {
   std::string escape(std::string_view text) {
@@ -114,6 +115,53 @@ std::string coffret::windowsComputerName(std::string_view machineName) {
   return name;
 }
 
+namespace {
+  // What runs once at the first logon, from whichever drive the answers disc got.
+  std::string firstLogonCommands(const coffret::WindowsAnswers& a) {
+    struct Command {
+      const char* description;
+      const char* line;
+    };
+    std::vector<Command> commands;
+    std::string graphicsDriver;
+    if (a.guestTools) {
+      commands.push_back({"virtio-win guest tools",
+                          R"(cmd /c for %d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do if exist %d:\virtio-win-guest-tools.exe start /wait %d:\virtio-win-guest-tools.exe /install /quiet /norestart)"});
+    }
+    if (a.graphicsDriver) {
+      graphicsDriver = std::format(
+          R"(powershell -NoProfile -ExecutionPolicy Bypass -Command "foreach ($d in 'DEFGHIJKLMNOPQRSTUVWXYZ'.ToCharArray()) {{ $i = $d + ':\viogpu3d\viogpu3d.inf'; if (Test-Path $i) {{ {}; break }} }}")",
+          coffret::windowsGraphicsDriverScript("$i")
+      );
+      commands.push_back({"viogpu3d graphics driver", graphicsDriver.c_str()});
+    }
+    if (commands.empty()) {
+      return {};
+    }
+    std::string xml = "      <FirstLogonCommands>\n";
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+      xml += std::format(R"(        <SynchronousCommand wcm:action="add">
+          <Order>{}</Order>
+          <Description>{}</Description>
+          <CommandLine>{}</CommandLine>
+        </SynchronousCommand>
+)",
+                         i + 1, commands[i].description, commands[i].line);
+    }
+    return xml + "      </FirstLogonCommands>\n";
+  }
+} // namespace
+
+std::string coffret::windowsGraphicsDriverScript(std::string_view inf) {
+  return std::format(
+      "Get-WindowsDriver -Online | Where-Object OriginalFileName -like '*\\viogpudo.inf' | "
+      "ForEach-Object {{ pnputil /delete-driver $_.Driver /uninstall /force }}; pnputil /add-driver {} /install | Out-Null; "
+      "Start-Sleep 3; if ((Get-CimInstance Win32_VideoController).Name -match '3D') {{ exit 0 }} "
+      "Write-Output 'Windows kept its old graphics driver.'; exit 1",
+      inf
+  );
+}
+
 std::string coffret::windowsAnswerFile(const WindowsAnswers& a) {
   const std::string keyboard = windowsKeyboard(a.keyboard);
   const std::string locale = windowsLocale(a.language);
@@ -202,14 +250,6 @@ std::string coffret::windowsAnswerFile(const WindowsAnswers& a) {
 )",
       kComponent, escape(ui), international, escape(a.edition), escape(a.productKey), escape(a.computerName), escape(zone), user,
       escape(a.realName.empty() ? a.user : a.realName), password,
-      a.guestTools ? R"(      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Description>virtio-win guest tools</Description>
-          <CommandLine>cmd /c for %d in (D E F G H I J K L M N O P Q R S T U V W X Y Z) do if exist %d:\virtio-win-guest-tools.exe start /wait %d:\virtio-win-guest-tools.exe /install /quiet /norestart</CommandLine>
-        </SynchronousCommand>
-      </FirstLogonCommands>
-)"
-                   : ""
+      firstLogonCommands(a)
   );
 }

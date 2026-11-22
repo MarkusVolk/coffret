@@ -35,6 +35,8 @@ namespace coffret {
       std::function<void(HostUsbDevice device, bool connect)> usb;
       // Out of the library; deleteFiles: with the machine's own folder and the disks in it.
       std::function<void(bool deleteFiles)> remove;
+      // Puts the viogpu3d driver into the running Windows guest.
+      std::function<void()> installGraphicsDriver;
       // Something on the page changed and wants a new layout.
       std::function<void()> changed;
     };
@@ -74,6 +76,7 @@ namespace coffret {
     Stepper* m_cpus = nullptr;
     Toggle* m_accel = nullptr;
     Label* m_accelNote = nullptr;
+    Button* m_installDriver = nullptr;
     Toggle* m_venus = nullptr;
     Toggle* m_sound = nullptr;
     Toggle* m_microphone = nullptr;

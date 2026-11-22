@@ -493,9 +493,10 @@ namespace {
     }
     // libvirt writes down which of QEMU's devices it took, and that one depends on the 3D setting.
     model.remove_attribute("device");
-    // libvirt has no setting for Vulkan in the guest: it goes to QEMU's device directly.
+    // libvirt has no setting for Vulkan or Direct3D in the guest: they go to QEMU's device directly.
     const bool venus = config.accel3d && config.venus;
-    if (venus) {
+    const bool neptune = config.accel3d && config.neptune;
+    if (venus || neptune) {
       setAttribute(model, "blob", "on");
       setAttribute(ensure(video, "alias"), "name", kVideoAlias);
     } else {
@@ -514,7 +515,7 @@ namespace {
         domain.remove_child(override);
       }
     }
-    if (venus) {
+    if (venus || neptune) {
       setAttribute(domain, "xmlns:qemu", kQemuNamespace);
       override = ensure(domain, "qemu:override");
       device = override.append_child("qemu:device");
@@ -526,9 +527,14 @@ namespace {
         setAttribute(node, "type", type);
         setAttribute(node, "value", value);
       };
-      property("venus", "bool", "true");
-      // Room on the host for the buffers guest and host share, 4 GiB of address space.
-      property("hostmem", "unsigned", "4294967296");
+      if (venus) {
+        property("venus", "bool", "true");
+      }
+      if (neptune) {
+        property("neptune", "bool", "true");
+      }
+      // Room on the host for the buffers guest and host share: 4 GiB of address space, 8 for Direct3D.
+      property("hostmem", "unsigned", neptune ? "8589934592" : "4294967296");
     }
   }
 
@@ -768,11 +774,17 @@ std::expected<coffret::VmConfig, std::string> coffret::readDomainXml(std::string
                 && std::string_view(model.child("acceleration").attribute("accel3d").value()) == "yes";
   config.renderNode = gl.attribute("rendernode").value();
   config.venus = false;
+  config.neptune = false;
   for (xml_node device : domain.child("qemu:override").children("qemu:device")) {
     for (xml_node property : device.child("qemu:frontend").children("qemu:property")) {
-      if (std::string_view(property.attribute("name").value()) == "venus"
-          && std::string_view(property.attribute("value").value()) == "true") {
+      const std::string_view name = property.attribute("name").value();
+      if (std::string_view(property.attribute("value").value()) != "true") {
+        continue;
+      }
+      if (name == "venus") {
         config.venus = config.accel3d;
+      } else if (name == "neptune") {
+        config.neptune = config.accel3d;
       }
     }
   }

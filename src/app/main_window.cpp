@@ -21,6 +21,7 @@
 #include "ui/style.h"
 #include "vm/domain_xml.h"
 #include "vm/firmware_store.h"
+#include "osinfo/windows_answers.h"
 #include "vm/host_info.h"
 #include "vm/host_network.h"
 #include "vm/machine_factory.h"
@@ -305,6 +306,9 @@ void coffret::MainWindow::openTab(const std::string& uuid) {
     );
     tab->console->hostCopied(m_hostClipboard);
     tab->console->setActive(false);
+    if (const Machine* machine = m_services.hypervisor.find(uuid)) {
+      tab->console->setFollowsWithoutPointer(machine->config.kind == GuestKind::Windows && machine->config.neptune);
+    }
     m_tabs.push_back(std::move(tab));
   }
   if (Tab* old = currentTab()) {
@@ -1060,6 +1064,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       }
     }
     m_message = std::format("No USB device {} is plugged in.", parameter);
+  } else if (name == "install-3d-driver") {
+    installGraphicsDriver();
   } else if (name == "clone" || name == "clone-linked") {
     cloneMachine(parameter, name == "clone-linked");
   } else if (name == "set") {
@@ -1077,6 +1083,9 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       config.cpus = static_cast<unsigned>(std::strtoul(value.c_str(), nullptr, 10));
     } else if (key == "3d") {
       config.accel3d = value == "on";
+      if (config.kind == GuestKind::Windows) {
+        config.venus = config.neptune = config.accel3d;
+      }
     } else if (key == "venus") {
       config.venus = value == "on";
     } else if (key == "sound") {
@@ -1361,6 +1370,7 @@ void coffret::MainWindow::build() {
       .clone = [this](std::string name, bool linked) { cloneMachine(name, linked); },
       .usb = [this](HostUsbDevice device, bool connect) { connectUsb(device, connect); },
       .remove = [this](bool deleteFiles) { removeMachine(m_current, deleteFiles); },
+      .installGraphicsDriver = [this] { installGraphicsDriver(); },
       .changed = [this] { requestUpdate(); },
   });
   m_machinePage = page.get();
@@ -1856,4 +1866,28 @@ void coffret::MainWindow::focus(wl_surface* surface, bool entered) {
     console->focusLost();
   }
   requestUpdate();
+}
+
+void coffret::MainWindow::installGraphicsDriver() {
+  const Machine* machine = currentMachine();
+  const std::string folder = direct3dDriverFolder();
+  if (!machine || folder.empty() || machine->state != MachineState::Running) {
+    m_message = "The 3D driver goes into a running Windows machine, on a computer that has it.";
+    requestUpdate();
+    return;
+  }
+  m_machinePage->setBusy(true);
+  m_message = std::format("Installing the 3D driver in {} …", machine->name);
+  requestUpdate();
+  m_services.hypervisor.runInWindows(
+      machine->uuid, folder, windowsGraphicsDriverScript("(Join-Path $folder 'viogpu3d.inf')"),
+      [this, alive = std::weak_ptr<int>(m_alive), name = machine->name](Hypervisor::Result result) {
+        if (alive.expired()) {
+          return;
+        }
+        m_machinePage->setBusy(false);
+        m_message = result ? std::format("{} draws with the 3D driver now.", name) : result.error();
+        requestUpdate();
+      }
+  );
 }

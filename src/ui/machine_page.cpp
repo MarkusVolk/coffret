@@ -136,12 +136,24 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
                 if (on && m_edit.renderNode.empty()) {
                   m_edit.renderNode = defaultRenderNode();
                 }
-                m_edit.venus = m_edit.venus && on;
+                const bool windows = m_edit.kind == GuestKind::Windows;
+                m_edit.venus = windows ? on : m_edit.venus && on;
+                m_edit.neptune = windows && on;
                 edited();
               },
       })
   ));
   page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_accelNote)));
+  page->addChild(field(
+      "",
+      ui::button({
+          .out = &m_installDriver,
+          .text = "Install the 3D driver",
+          .glyph = "download",
+          .variant = ButtonVariant::Outline,
+          .onClick = [this] { m_callbacks.installGraphicsDriver(); },
+      })
+  ));
   page->addChild(field(
       "Vulkan",
       ui::toggle({
@@ -691,10 +703,17 @@ void coffret::MachinePage::sync() {
   );
   const bool active = isActive(m_machine.state);
   const bool windows = m_edit.kind == GuestKind::Windows;
-  m_accel->setEnabled(!windows || m_edit.accel3d);
+  const bool direct3d = !direct3dDriverFolder().empty();
+  m_accel->setEnabled(!windows || direct3d || m_edit.accel3d);
   m_accelNote->setVisible(windows);
-  m_venus->setEnabled(m_edit.accel3d);
-  m_accelNote->setText("Windows has no 3D driver for this virtual graphics card yet; it draws in 2D either way.");
+  m_venus->setEnabled(m_edit.accel3d && !windows);
+  m_installDriver->setVisible(windows && direct3d && m_machine.config.neptune);
+  m_installDriver->setEnabled(!m_busy && m_machine.state == MachineState::Running);
+  m_accelNote->setText(
+      direct3d ? "Direct3D and Vulkan through the viogpu3d driver, which coffret installs with Windows; "
+                 "a machine set up before gets it while it runs, through the guest agent."
+               : "Windows draws in 2D: this computer has no viogpu3d driver or no QEMU with Direct3D for guests."
+  );
   m_microphone->setEnabled(m_edit.sound);
   m_secureBoot->setEnabled(m_edit.firmware != Firmware::Bios);
   const bool nat = m_edit.nics.empty() || m_edit.nics.front().kind == NetworkKind::User;

@@ -32,6 +32,8 @@ namespace coffret {
     std::string language;
     std::string timezone;
     std::string hostname;
+    // A folder with a graphics driver Windows installs at the first logon (viogpu3d); empty for none.
+    std::string windowsGraphicsDriver;
   };
 
   // The user, keyboard, language and time zone of this computer; no password.

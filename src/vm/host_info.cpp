@@ -1,5 +1,8 @@
 #include "vm/host_info.h"
 
+#include "coffret_build_info.h"
+#include "storage/process.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <string_view>
@@ -49,4 +52,18 @@ std::string coffret::findVirtiofsd() {
     }
   }
   return {};
+}
+
+std::string coffret::direct3dDriverFolder() {
+  static const std::string folder = [] {
+    const char* override = std::getenv("COFFRET_VIOGPU3D");
+    const std::filesystem::path path = override && *override ? override : COFFRET_INSTALL_DATADIR "/viogpu3d";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path / "viogpu3d.inf", error)) {
+      return std::string();
+    }
+    const auto help = runCommand({"qemu-system-x86_64", "-device", "virtio-vga-gl,help"});
+    return help && help->find("neptune=") != std::string::npos ? path.string() : std::string();
+  }();
+  return folder;
 }

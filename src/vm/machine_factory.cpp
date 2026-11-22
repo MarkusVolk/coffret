@@ -144,13 +144,20 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   config.disks.push_back({.path = iso.string(), .format = "raw", .bus = DiskBus::Sata, .cdrom = true, .readOnly = true, .bootOrder = 2});
   config.nics.emplace_back().model = windows ? "e1000e" : "virtio";
   config.renderNode = defaultRenderNode();
-  // Windows has no driver for it out of the box.
-  config.accel3d = !config.renderNode.empty() && request.kind != GuestKind::Windows;
+  // Windows has no driver for it out of the box: it gets viogpu3d at the first logon, with Direct3D
+  // through Neptune, where the host has both.
+  const std::string direct3dDriver = windows ? direct3dDriverFolder() : std::string();
+  config.accel3d = !config.renderNode.empty() && (!windows || !direct3dDriver.empty());
+  config.venus = windows && config.accel3d;
+  config.neptune = windows && config.accel3d;
   config.tpm = request.kind == GuestKind::Windows;
   if (request.unattended) {
     GuestSetup setup = *request.unattended;
     if (setup.hostname.empty()) {
       setup.hostname = guestHostname(request.name);
+    }
+    if (config.neptune) {
+      setup.windowsGraphicsDriver = direct3dDriver;
     }
     const auto files = prepareUnattended(iso.string(), setup, folder.string());
     if (!files) {

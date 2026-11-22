@@ -89,6 +89,9 @@ namespace coffret {
     // description of the device.
     void attachDevice(const std::string& uuid, const std::string& xml, Done done);
     void detachDevice(const std::string& uuid, const std::string& xml, Done done);
+    // Copies the files of `folder` into a running Windows guest through its guest agent and runs
+    // `script` (PowerShell) there, with `$folder` set to where they landed.
+    void runInWindows(const std::string& uuid, const std::string& folder, const std::string& script, Done done);
 
     // A connection to the running machine's display, for QemuDisplay.
     void openDisplay(const std::string& uuid, std::function<void(std::expected<int, std::string>)> done);

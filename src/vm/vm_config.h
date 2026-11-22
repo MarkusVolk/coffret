@@ -105,6 +105,8 @@ namespace coffret {
     bool accel3d = true;
     // Vulkan for the guest on top of that; needs a Linux guest that is recent enough.
     bool venus = false;
+    // Direct3D for a Windows guest with the viogpu3d driver, through virglrenderer's Neptune.
+    bool neptune = false;
     // The GPU to render on, e.g. "/dev/dri/renderD129"; required with accel3d.
     std::string renderNode;
     bool sound = true;

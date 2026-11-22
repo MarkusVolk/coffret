@@ -181,6 +181,10 @@ namespace {
     const char* override = std::getenv("COFFRET_VIRTIO_WIN");
     const fs::path tools = override && *override ? override : COFFRET_INSTALL_DATADIR "/virtio-win/virtio-win-guest-tools.exe";
     answers.guestTools = fs::copy_file(tools, directory / "virtio-win-guest-tools.exe", error);
+    if (!setup.windowsGraphicsDriver.empty()) {
+      fs::copy(setup.windowsGraphicsDriver, directory / "viogpu3d", error);
+      answers.graphicsDriver = !error;
+    }
     std::ofstream(directory / "autounattend.xml") << coffret::windowsAnswerFile(answers);
     const fs::path disk = fs::path(folder) / "answers.iso";
     // Setup looks for autounattend.xml at the root of every drive.

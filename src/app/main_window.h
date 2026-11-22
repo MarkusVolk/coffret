@@ -120,6 +120,7 @@ namespace coffret {
     bool keysToGuest();
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
+    void installGraphicsDriver();
     void cloneMachine(const std::string& name, bool linked);
     void connectUsb(const HostUsbDevice& device, bool connect);
     void revokeUsb(const HostUsbDevice& device);

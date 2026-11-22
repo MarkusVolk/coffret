@@ -86,6 +86,13 @@ int main() {
   CHECK(has(venusXml, "<qemu:property name=\"venus\" type=\"bool\" value=\"true\""));
   CHECK(has(venusXml, "<alias name=\"ua-coffret-video\""));
   CHECK((*coffret::readDomainXml(venusXml) == venus));
+  auto direct3d = config;
+  direct3d.venus = true;
+  direct3d.neptune = true;
+  const std::string direct3dXml = coffret::buildDomainXml(direct3d, environment);
+  CHECK(has(direct3dXml, "<qemu:property name=\"neptune\" type=\"bool\" value=\"true\""));
+  CHECK(has(direct3dXml, "value=\"8589934592\""));
+  CHECK((*coffret::readDomainXml(direct3dXml) == direct3d));
   const auto noVenus = coffret::updateDomainXml(venusXml, config, environment);
   CHECK(noVenus.has_value() && !has(*noVenus, "qemu:override") && !has(*noVenus, "blob="));
 

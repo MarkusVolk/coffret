@@ -32,7 +32,7 @@ executable('coffret',
   app_sources + protocol_sources + protocol_headers + [build_info],
   include_directories: src_inc,
   dependencies: [
-    core_dep, libvirt, libosinfo, noctalia_ui_dep, noctalia_ui_codecs_dep, gio, gio_unix, tomlplusplus, nlohmann_json, egl, glesv2,
+    core_dep, libvirt, dependency('libvirt-qemu'), libosinfo, noctalia_ui_dep, noctalia_ui_codecs_dep, gio, gio_unix, tomlplusplus, nlohmann_json, egl, glesv2,
     dependency('wayland-client'), dependency('wayland-cursor'), dependency('threads'),
   ],
   install: true,

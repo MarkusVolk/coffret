@@ -58,5 +58,12 @@ int main() {
   pugi::xml_document tools;
   CHECK(tools.load_string(withTools.c_str()));
   CHECK(withTools.find("virtio-win-guest-tools.exe /install /quiet") != std::string::npos);
+  answers.graphicsDriver = true;
+  const std::string withDriver = coffret::windowsAnswerFile(answers);
+  pugi::xml_document driver;
+  CHECK(driver.load_string(withDriver.c_str()));
+  CHECK(withDriver.find("viogpudo.inf") != std::string::npos);
+  CHECK(withDriver.find("pnputil /add-driver $i /install") != std::string::npos);
+  CHECK(withDriver.find("<Order>2</Order>") != std::string::npos);
   return 0;
 }
