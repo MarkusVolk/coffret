@@ -339,8 +339,9 @@ bool coffret::ConsoleView::pointer(const PointerEvent& event) {
     return guestPoint(m_node->placement(m_host.surface.effectiveBufferScale()), localX, localY, stats.width, stats.height);
   };
   if (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Leave) {
-    // Two pointers on top of each other are one too many: the guest's wins over its picture.
-    const bool hide = event.type != PointerEvent::Type::Leave && m_node->guestCursorVisible() && (locked || position().has_value());
+    // Over its picture the guest's pointer is the only one: drawn from its cursor, or into the picture by a guest
+    // without one (Windows). Without an absolute pointer the host's stays until the mouse is grabbed.
+    const bool hide = event.type != PointerEvent::Type::Leave && (locked || (m_display->pointerAbsolute() && position().has_value()));
     if (m_host.hostCursor && (hide || m_hostCursorHidden)) {
       m_host.hostCursor(hide, event.serial);
     }
