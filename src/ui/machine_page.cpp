@@ -4,11 +4,13 @@
 #include "ui/controls/button.h"
 #include "ui/controls/input.h"
 #include "ui/controls/label.h"
+#include "ui/controls/select.h"
 #include "ui/controls/stepper.h"
 #include "ui/controls/toggle.h"
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "vm/host_info.h"
+#include "vm/host_network.h"
 
 #include <algorithm>
 #include <ctime>
@@ -216,6 +218,29 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
       })
   ));
   page->addChild(field(
+      "Network",
+      ui::select({
+          .out = &m_network,
+          .width = 320.0F,
+          .onSelectionChanged =
+              [this, edited](std::size_t index, std::string_view) {
+                if (m_edit.nics.empty()) {
+                  m_edit.nics.emplace_back();
+                }
+                Nic& nic = m_edit.nics.front();
+                if (index == 0 || index > m_bridges.size()) {
+                  nic.kind = NetworkKind::User;
+                  nic.bridge.clear();
+                } else {
+                  nic.kind = NetworkKind::Bridge;
+                  nic.bridge = m_bridges[index - 1];
+                }
+                edited();
+              },
+      })
+  ));
+  page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_networkNote)));
+  auto forwardsRow = field(
       "Port forwards",
       ui::input({
           .out = &m_forwards,
@@ -230,7 +255,9 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
                 edited();
               },
       })
-  ));
+  );
+  m_forwardsRow = forwardsRow.get();
+  page->addChild(std::move(forwardsRow));
   page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_forwardsNote)));
   page->addChild(ui::column({.out = &m_folderRows, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   page->addChild(field(
@@ -460,6 +487,31 @@ void coffret::MachinePage::rebuildRemove() {
   m_removeStale = false;
 }
 
+std::vector<std::string> coffret::MachinePage::bridgeChoices() const {
+  std::vector<std::string> bridges = hostBridges();
+  const Nic* nic = m_edit.nics.empty() ? nullptr : &m_edit.nics.front();
+  // A bridge the machine is set to stays on the list while it is not there.
+  if (nic && nic->kind == NetworkKind::Bridge && std::ranges::find(bridges, nic->bridge) == bridges.end()) {
+    bridges.push_back(nic->bridge);
+  }
+  return bridges;
+}
+
+void coffret::MachinePage::fillNetwork() {
+  m_bridges = bridgeChoices();
+  const Nic* nic = m_edit.nics.empty() ? nullptr : &m_edit.nics.front();
+  std::vector<std::string> options{"NAT, through this computer"};
+  std::size_t selected = 0;
+  for (std::size_t i = 0; i < m_bridges.size(); ++i) {
+    options.push_back(std::format("Bridge {}", m_bridges[i]));
+    if (nic && nic->kind == NetworkKind::Bridge && nic->bridge == m_bridges[i]) {
+      selected = i + 1;
+    }
+  }
+  m_network->setOptions(std::move(options));
+  m_network->setSelectedIndexSilently(selected);
+}
+
 void coffret::MachinePage::setMachine(const Machine& machine) {
   const bool other = machine.uuid != m_machine.uuid;
   // Settings that changed underneath replace what is shown, unless the user is in the middle of changing them.
@@ -503,6 +555,7 @@ void coffret::MachinePage::fill() {
   m_secureBoot->setCheckedImmediate(m_edit.firmware == Firmware::UefiSecureBoot);
   m_clipboard->setCheckedImmediate(m_edit.clipboard);
   m_forwards->setValue(m_edit.nics.empty() ? "" : formatPortForwards(m_edit.nics.front().forwards));
+  fillNetwork();
   const Disk* drive = cdromOf(m_edit);
   m_cdrom->setValue(drive ? drive->path : "");
 }
@@ -517,9 +570,6 @@ void coffret::MachinePage::rebuildFacts() {
     if (!disk.cdrom) {
       fact("Hard disk", std::format("{} ({})", disk.path, toString(disk.bus)));
     }
-  }
-  for (const auto& nic : config.nics) {
-    fact("Network", nic.kind == NetworkKind::Bridge ? std::format("Bridged ({})", nic.bridge) : "NAT");
   }
   fact("Firmware", config.firmware == Firmware::Bios ? "BIOS" : "UEFI");
   m_factsStale = false;
@@ -607,12 +657,15 @@ void coffret::MachinePage::sync() {
   if (m_foldersStale) {
     rebuildFolders();
   }
-  // Devices come and go; looking every two seconds while the page is up is cheap.
+  // Devices and bridges come and go; looking every two seconds while the page is up is cheap.
   if (const auto now = std::chrono::steady_clock::now(); now - m_usbScanned > std::chrono::seconds(2)) {
     m_usbScanned = now;
     if (auto devices = listUsbDevices(); devices != m_usbDevices) {
       m_usbDevices = std::move(devices);
       m_usbStale = true;
+    }
+    if (bridgeChoices() != m_bridges) {
+      fillNetwork();
     }
   }
   if (m_usbStale) {
@@ -626,12 +679,29 @@ void coffret::MachinePage::sync() {
   const bool active = isActive(m_machine.state);
   m_microphone->setEnabled(m_edit.sound);
   m_secureBoot->setEnabled(m_edit.firmware != Firmware::Bios);
-  const bool nat = !m_edit.nics.empty() && m_edit.nics.front().kind == NetworkKind::User;
+  const bool nat = m_edit.nics.empty() || m_edit.nics.front().kind == NetworkKind::User;
+  m_forwardsRow->setVisible(nat);
+  m_forwardsNote->setVisible(nat);
   m_forwardsNote->setText(
-      !nat                                         ? "Ports are forwarded for a machine behind NAT."
-      : !parsePortForwards(m_forwards->value())    ? "Not readable yet: protocol, the port on this computer, the port in the guest."
-                                                   : "Connections to these ports of this computer reach the guest."
+      !parsePortForwards(m_forwards->value()) ? "Not readable yet: protocol, the port on this computer, the port in the guest."
+                                              : "Connections to these ports of this computer reach the guest."
   );
+  if (nat) {
+    m_networkNote->setText(
+        m_bridges.empty() ? "The guest reaches out through this computer. To be a machine of its own in the local network, "
+                            "it needs a network bridge here, with the wired card in it; a wireless card cannot be bridged."
+                          : "The guest reaches out through this computer; from outside it is reached through port forwards."
+    );
+  } else {
+    const std::string& bridge = m_edit.nics.front().bridge;
+    if (const auto now = std::chrono::steady_clock::now(); bridge != m_bridgeChecked || now - m_bridgeCheckedAt > std::chrono::seconds(2)) {
+      m_bridgeChecked = bridge;
+      m_bridgeCheckedAt = now;
+      m_bridgeProblem = bridgeProblem(bridge);
+    }
+    const std::string& problem = m_bridgeProblem;
+    m_networkNote->setText(problem.empty() ? "The guest is a machine of its own in the local network and gets its address there." : problem);
+  }
   const bool dirty = m_edit != m_machine.config;
   m_apply->setEnabled(dirty);
   m_applyNote->setText(dirty && active ? "Takes effect when the machine is started the next time." : "");

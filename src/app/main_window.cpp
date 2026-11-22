@@ -22,6 +22,7 @@
 #include "vm/domain_xml.h"
 #include "vm/firmware_store.h"
 #include "vm/host_info.h"
+#include "vm/host_network.h"
 #include "vm/machine_factory.h"
 #include "app/worker.h"
 #include "storage/process.h"
@@ -353,13 +354,24 @@ void coffret::MainWindow::run(
   }
   m_message.clear();
   std::weak_ptr<int> alive = m_alive;
-  (m_services.hypervisor.*call)(uuid, [this, alive, what](Hypervisor::Result result) {
+  (m_services.hypervisor.*call)(uuid, [this, alive, what, uuid](Hypervisor::Result result) {
     if (alive.expired()) {
       return;
     }
     if (!result) {
       m_message = result.error();
       kLog.warn("{}: {}", what, result.error());
+      // libvirt only says that the bridge helper failed; what is missing for it is known here.
+      const Machine* machine = m_services.hypervisor.find(uuid);
+      if (what == "start" && machine) {
+        for (const auto& nic : machine->config.nics) {
+          if (nic.kind == NetworkKind::Bridge) {
+            if (std::string problem = bridgeProblem(nic.bridge); !problem.empty()) {
+              m_message = std::format("{} cannot start on bridge {}: {}", machine->name, nic.bridge, problem);
+            }
+          }
+        }
+      }
     }
     requestUpdate();
   });
@@ -1050,6 +1062,13 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
         return false;
       }
       config.nics[0].forwards = parsePortForwards(value).value_or(std::vector<PortForward>());
+    } else if (key == "network") {
+      // "network=nat", or "network=br0" for a bridge, for the first network card.
+      if (config.nics.empty()) {
+        config.nics.emplace_back();
+      }
+      config.nics[0].kind = value == "nat" ? NetworkKind::User : NetworkKind::Bridge;
+      config.nics[0].bridge = value == "nat" ? "" : value;
     } else if (key == "share") {
       // "share=/path:tag"; "share=" shares nothing.
       config.folders.clear();

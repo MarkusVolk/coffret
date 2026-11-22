@@ -26,6 +26,10 @@ Things to know:
 - A shared folder is mounted in the guest with `mount -t virtiofs <name> /mnt`. Whoever writes
   in the guest, the files belong to the user on the host; in the guest they belong to its first
   user (id 1000).
+- A machine on a network bridge of the host is a machine of its own in the local network. That
+  needs a bridge with the wired card in it (a wireless card cannot be bridged), QEMU's
+  `qemu-bridge-helper` setuid root, and `/etc/qemu/bridge.conf` allowing the bridge
+  (`allow br0`). coffret says which of these is missing.
 - A USB device is given to a machine through `pkexec` and `coffret-usb-acl`, which lets the user
   open that one device; the polkit action asks nobody in the active session. It needs `setfacl`.
 
@@ -74,7 +78,7 @@ A running Coffret takes named actions on `org.freedesktop.Application`; `coffret
 | `finish-install` | machine | boots a machine from its disk whose unattended installation coffret did not see end |
 | `import` | `image[|name[|cdrom]]` | a machine from a disk image, as a copy |
 | `define` | file | a libvirt domain from its XML |
-| `set` | `memory=4096`, `cpus=4`, `3d=on`, `sound=off`, `microphone=on`, `forward=tcp:2222:22`, `share=/path:name` | one setting of the shown machine |
+| `set` | `memory=4096`, `cpus=4`, `3d=on`, `sound=off`, `microphone=on`, `network=nat`, `network=br0`, `forward=tcp:2222:22`, `share=/path:name` | one setting of the shown machine |
 | `snapshot`, `revert`, `delete-snapshot` | name | snapshots of the shown machine |
 | `clone`, `clone-linked` | name | a copy of the shown machine |
 | `delete`, `forget` | machine | removes it with its own folder, or only out of the library |

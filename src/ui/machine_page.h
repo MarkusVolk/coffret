@@ -14,6 +14,7 @@
 
 class Button;
 class Input;
+class Select;
 class Label;
 class Stepper;
 class Toggle;
@@ -80,6 +81,16 @@ namespace coffret {
     Input* m_cdrom = nullptr;
     Input* m_forwards = nullptr;
     Label* m_forwardsNote = nullptr;
+    Flex* m_forwardsRow = nullptr;
+    Select* m_network = nullptr;
+    Label* m_networkNote = nullptr;
+    // The bridges the network choice lists after NAT, in its order.
+    std::vector<std::string> m_bridges;
+    // What keeps the machine off its bridge, looked up again every few seconds.
+    std::string m_bridgeChecked, m_bridgeProblem;
+    std::chrono::steady_clock::time_point m_bridgeCheckedAt{};
+    void fillNetwork();
+    std::vector<std::string> bridgeChoices() const;
     Flex* m_facts = nullptr;
     Button* m_apply = nullptr;
     Label* m_applyNote = nullptr;
