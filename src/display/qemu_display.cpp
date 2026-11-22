@@ -6,6 +6,8 @@
 #include <cstring>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
+#include <mutex>
+#include <string_view>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <thread>
@@ -17,6 +19,25 @@ namespace {
 
   constexpr const char* kConsolePath = "/org/qemu/Display1/Console_0";
   constexpr const char* kListenerPath = "/org/qemu/Display1/Listener";
+  constexpr const char* kClipboardPath = "/org/qemu/Display1/Clipboard";
+  constexpr const char* kClipboardInterface = "org.qemu.Display1.Clipboard";
+  constexpr const char* kTextMime = "text/plain;charset=utf-8";
+  // Both ends of the display bus have this interface; selection 0 is the clipboard.
+  constexpr const char* kClipboardXml = R"(<node>
+  <interface name="org.qemu.Display1.Clipboard">
+    <method name="Register"/>
+    <method name="Unregister"/>
+    <method name="Grab">
+      <arg type="u" name="selection" direction="in"/><arg type="u" name="serial" direction="in"/>
+      <arg type="as" name="mimes" direction="in"/>
+    </method>
+    <method name="Release"><arg type="u" name="selection" direction="in"/></method>
+    <method name="Request">
+      <arg type="u" name="selection" direction="in"/><arg type="as" name="mimes" direction="in"/>
+      <arg type="s" name="reply_mime" direction="out"/><arg type="ay" name="data" direction="out"/>
+    </method>
+  </interface>
+</node>)";
   constexpr const char* kMapInterface = "org.qemu.Display1.Listener.Unix.Map";
   constexpr const char* kDmabuf2Interface = "org.qemu.Display1.Listener.Unix.ScanoutDMABUF2";
 
@@ -133,6 +154,13 @@ struct coffret::QemuDisplay::Impl {
   // Tells callbacks queued for the main thread that the display is gone.
   std::shared_ptr<int> alive = std::make_shared<int>(0);
 
+  // The clipboard: what the host offers, and the count of grabs that both ends share.
+  GDBusNodeInfo* clipboardNode = nullptr;
+  std::mutex clipboardMutex;
+  std::string hostText;
+  std::atomic<std::uint32_t> clipboardSerial{0};
+  std::atomic<bool> clipboard{false};
+
   // The copy of the picture for the plain Scanout/Update calls, which carry bytes.
   std::shared_ptr<std::vector<std::uint8_t>> shadow;
   std::uint32_t shadowWidth = 0, shadowHeight = 0, shadowStride = 0, shadowFormat = 0;
@@ -144,6 +172,15 @@ struct coffret::QemuDisplay::Impl {
   void readPointerMode();
   void call(const char* interface, const char* method, GVariant* parameters);
 
+  void registerClipboard();
+  void grab();
+  void clipboardCall(const char* method, GVariant* parameters, GDBusMethodInvocation* invocation);
+  static void onClipboardCall(
+      GDBusConnection*, const char*, const char*, const char*, const char* method, GVariant* parameters,
+      GDBusMethodInvocation* invocation, gpointer data
+  ) {
+    static_cast<Impl*>(data)->clipboardCall(method, parameters, invocation);
+  }
   void methodCall(const char* interface, const char* method, GVariant* parameters, GDBusMethodInvocation* invocation);
   static void onMethodCall(
       GDBusConnection*, const char*, const char*, const char* interface, const char* method, GVariant* parameters,
@@ -301,7 +338,133 @@ bool coffret::QemuDisplay::Impl::connect(std::string& why) {
     }
   }
   g_dbus_connection_start_message_processing(listener);
+  registerClipboard();
   return true;
+}
+
+void coffret::QemuDisplay::Impl::registerClipboard() {
+  clipboardNode = g_dbus_node_info_new_for_xml(kClipboardXml, nullptr);
+  static const GDBusInterfaceVTable vtable = {.method_call = onClipboardCall, .get_property = nullptr, .set_property = nullptr, .padding = {}};
+  if (!clipboardNode
+      || g_dbus_connection_register_object(bus, kClipboardPath, clipboardNode->interfaces[0], &vtable, this, nullptr, nullptr) == 0) {
+    return;
+  }
+  // QEMU looks at this side's object before it answers, so the answer cannot be waited for here.
+  // The call fails for a machine without the clipboard channel: then there is nothing to share.
+  g_dbus_connection_call(
+      bus, nullptr, kClipboardPath, kClipboardInterface, "Register", nullptr, nullptr, G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+      [](GObject* source, GAsyncResult* result, gpointer data) {
+        auto* self = static_cast<Impl*>(data);
+        GError* error = nullptr;
+        GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+        if (!reply) {
+          kLog.debug("no clipboard with this machine: {}", error->message);
+          g_error_free(error);
+          return;
+        }
+        g_variant_unref(reply);
+        self->clipboard = true;
+        // What the host copied before the guest was there.
+        std::string text;
+        {
+          const std::lock_guard lock(self->clipboardMutex);
+          text = self->hostText;
+        }
+        if (!text.empty()) {
+          self->grab();
+        }
+      },
+      this
+  );
+}
+
+void coffret::QemuDisplay::Impl::grab() {
+  const char* const mimes[] = {kTextMime, nullptr};
+  g_dbus_connection_call(
+      bus, nullptr, kClipboardPath, kClipboardInterface, "Grab", g_variant_new("(uu^as)", 0U, ++clipboardSerial, mimes), nullptr,
+      G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+      [](GObject* source, GAsyncResult* result, gpointer) {
+        GError* error = nullptr;
+        if (GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error)) {
+          g_variant_unref(reply);
+          kLog.debug("the host's clipboard is offered to the guest");
+        } else {
+          kLog.debug("the guest's side did not take the clipboard: {}", error->message);
+          g_error_free(error);
+        }
+      },
+      nullptr
+  );
+}
+
+void coffret::QemuDisplay::Impl::clipboardCall(const char* method, GVariant* parameters, GDBusMethodInvocation* invocation) {
+  const std::string_view name(method);
+  if (name == "Grab") {
+    guint32 selection = 0, serial = 0;
+    GVariant* mimes = nullptr;
+    g_variant_get(parameters, "(uu@as)", &selection, &serial, &mimes);
+    gsize count = 0;
+    const char** list = g_variant_get_strv(mimes, &count);
+    bool text = false;
+    for (gsize index = 0; index < count; ++index) {
+      text = text || std::string_view(list[index]) == kTextMime;
+    }
+    g_free(list);
+    g_variant_unref(mimes);
+    g_dbus_method_invocation_return_value(invocation, nullptr);
+    if (selection != 0 || !text) {
+      return;
+    }
+    clipboardSerial = serial;
+    // The guest has copied something: fetch it right away, as text is small and the host's
+    // clipboard then has it whether or not the guest is still there when it is pasted.
+    const char* const wanted[] = {kTextMime, nullptr};
+    g_dbus_connection_call(
+        bus, nullptr, kClipboardPath, kClipboardInterface, "Request", g_variant_new("(u^as)", 0U, wanted), G_VARIANT_TYPE("(say)"),
+        G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          auto* self = static_cast<Impl*>(data);
+          GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, nullptr);
+          if (!reply) {
+            return;
+          }
+          const char* mime = nullptr;
+          GVariant* bytes = nullptr;
+          g_variant_get(reply, "(&s@ay)", &mime, &bytes);
+          gsize size = 0;
+          const auto* data8 = static_cast<const char*>(g_variant_get_fixed_array(bytes, &size, 1));
+          std::string text(data8, size);
+          g_variant_unref(bytes);
+          g_variant_unref(reply);
+          self->postToMain([self, text = std::move(text)] {
+            if (self->callbacks.guestClipboard) {
+              self->callbacks.guestClipboard(text);
+            }
+          });
+        },
+        this
+    );
+  } else if (name == "Request") {
+    kLog.debug("the guest pastes the host's clipboard");
+    guint32 selection = 0;
+    g_variant_get(parameters, "(u@as)", &selection, nullptr);
+    std::string text;
+    {
+      const std::lock_guard lock(clipboardMutex);
+      text = hostText;
+    }
+    if (selection != 0) {
+      g_dbus_method_invocation_return_error_literal(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED, "nothing in this selection");
+      return;
+    }
+    g_dbus_method_invocation_return_value(
+        invocation,
+        g_variant_new("(s@ay)", kTextMime, g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, text.data(), text.size(), 1))
+    );
+  } else {
+    // Register, Unregister, Release: nothing to do on this side.
+    g_dbus_method_invocation_return_value(invocation, nullptr);
+  }
 }
 
 void coffret::QemuDisplay::Impl::run() {
@@ -333,6 +496,9 @@ void coffret::QemuDisplay::Impl::run() {
   }
   if (node) {
     g_dbus_node_info_unref(node);
+  }
+  if (clipboardNode) {
+    g_dbus_node_info_unref(clipboardNode);
   }
   if (busFd >= 0) {
     ::close(busFd);
@@ -539,6 +705,23 @@ coffret::QemuDisplay::~QemuDisplay() {
     m_impl->thread.join();
   }
   g_main_context_unref(m_impl->context);
+}
+
+void coffret::QemuDisplay::offerClipboard(std::string text) {
+  if (!m_impl->bus) {
+    return;
+  }
+  {
+    const std::lock_guard lock(m_impl->clipboardMutex);
+    if (m_impl->hostText == text) {
+      return;
+    }
+    m_impl->hostText = std::move(text);
+  }
+  // Before the clipboard is registered the text waits for that.
+  if (m_impl->clipboard) {
+    m_impl->grab();
+  }
 }
 
 void coffret::QemuDisplay::keyPress(std::uint32_t qnum) {

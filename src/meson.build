@@ -14,6 +14,7 @@ app_sources = files(
   'libvirt/hypervisor.cpp',
   'main.cpp',
   'osinfo/install_media.cpp',
+  'platform/clipboard.cpp',
   'platform/desktop_integration.cpp',
   'platform/file_portal.cpp',
   'platform/launch_activation.cpp',

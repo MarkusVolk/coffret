@@ -44,6 +44,7 @@ void coffret::FrameStore::setPixels(
 ) {
   {
     std::lock_guard lock(m_mutex);
+    m_pending.reset();
     m_scanout = Scanout{};
     m_scanout.kind = Scanout::Kind::Pixels;
     m_scanout.serial = m_nextSerial++;
@@ -63,6 +64,14 @@ void coffret::FrameStore::setDmabuf(Scanout scanout) {
     std::lock_guard lock(m_mutex);
     scanout.kind = Scanout::Kind::Dmabuf;
     scanout.serial = m_nextSerial++;
+    // QEMU names the buffer first and has the GPU finish the picture only with the update that
+    // follows: shown at once, the buffer could still hold what was in it two pictures ago.
+    if (m_scanout.kind == Scanout::Kind::Dmabuf) {
+      m_pending = std::move(scanout);
+      m_pendingSince = std::chrono::steady_clock::now();
+      return;
+    }
+    m_pending.reset();
     m_scanout = std::move(scanout);
     m_damage = {};
   }
@@ -72,6 +81,7 @@ void coffret::FrameStore::setDmabuf(Scanout scanout) {
 void coffret::FrameStore::disable() {
   {
     std::lock_guard lock(m_mutex);
+    m_pending.reset();
     m_scanout = Scanout{};
     m_scanout.serial = m_nextSerial++;
     m_damage = {};
@@ -82,6 +92,11 @@ void coffret::FrameStore::disable() {
 void coffret::FrameStore::damage(Rect rect) {
   {
     std::lock_guard lock(m_mutex);
+    if (m_pending) {
+      m_scanout = std::move(*m_pending);
+      m_pending.reset();
+      m_damage = {};
+    }
     if (m_scanout.kind == Scanout::Kind::None) {
       return;
     }
@@ -120,6 +135,12 @@ void coffret::FrameStore::moveCursor(std::int32_t x, std::int32_t y, bool visibl
 
 coffret::FrameStore::Snapshot coffret::FrameStore::take() {
   std::lock_guard lock(m_mutex);
+  // A buffer whose update never came is shown all the same, a little later.
+  if (m_pending && std::chrono::steady_clock::now() - m_pendingSince > std::chrono::milliseconds(100)) {
+    m_scanout = std::move(*m_pending);
+    m_pending.reset();
+    m_damage = {};
+  }
   Snapshot out{m_scanout, m_damage};
   m_damage = {};
   return out;

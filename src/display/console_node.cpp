@@ -11,6 +11,7 @@
 #include <GLES2/gl2ext.h>
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <format>
 #include <mutex>
 #include <unordered_map>
@@ -196,6 +197,40 @@ void main() {
       glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
     }
 
+    // The texture's content into a PPM file, top row first.
+    void dump(Slot& slot, std::uint32_t width, std::uint32_t height, bool bottomUp, const std::string& path) {
+      if (width == 0 || height == 0) {
+        return;
+      }
+      GLint previous = 0;
+      glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
+      GLuint framebuffer = 0;
+      glGenFramebuffers(1, &framebuffer);
+      glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, slot.texture, 0);
+      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+          std::fprintf(file, "P6\n%u %u\n255\n", width, height);
+          std::vector<std::uint8_t> row(static_cast<std::size_t>(width) * 3);
+          for (std::uint32_t y = 0; y < height; ++y) {
+            const std::uint8_t* source = pixels.data() + static_cast<std::size_t>(bottomUp ? height - 1 - y : y) * width * 4;
+            for (std::uint32_t x = 0; x < width; ++x) {
+              row[x * 3] = source[x * 4];
+              row[x * 3 + 1] = source[x * 4 + 1];
+              row[x * 3 + 2] = source[x * 4 + 2];
+            }
+            std::fwrite(row.data(), 1, row.size(), file);
+          }
+          std::fclose(file);
+        }
+      }
+      glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+      glDeleteFramebuffers(1, &framebuffer);
+    }
+
     void drawSlot(
         Slot& slot, const CustomDrawContext& context, const coffret::Placement& placement, const std::array<float, 4>& uv
     ) {
@@ -283,8 +318,9 @@ void coffret::ConsoleNode::draw(RenderBackend& backend, const CustomDrawContext&
   }
   if (scanout.kind == Scanout::Kind::Dmabuf) {
     if (fresh) {
-      slot.serial = scanout.serial;
       const std::string problem = program.import(slot, scanout);
+      // After the import, which starts from an empty slot.
+      slot.serial = scanout.serial;
       if (!problem.empty()) {
         kLog.warn("{}", problem);
       }
@@ -320,6 +356,9 @@ void coffret::ConsoleNode::draw(RenderBackend& backend, const CustomDrawContext&
   }
   if (fresh || !snapshot.damage.empty()) {
     ++m_stats.frames;
+  }
+  if (!m_dumpPath.empty() && slot.usable) {
+    program.dump(slot, scanout.width, scanout.height, scanout.kind == Scanout::Kind::Dmabuf && scanout.y0Top, std::exchange(m_dumpPath, {}));
   }
   m_stats.width = scanout.width;
   m_stats.height = scanout.height;

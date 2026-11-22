@@ -30,6 +30,9 @@ namespace coffret {
     std::optional<std::string> clipboardText() override;
     void setClipboardText(std::string text) override;
     void requestClipboardText(std::function<void(std::optional<std::string>)> callback) override;
+    // Called when another client put something into the selection. A client hears of that only
+    // while one of its windows has the keyboard, and once when it gets it.
+    void setOnForeign(std::function<void()> changed);
 
   private:
     struct State;

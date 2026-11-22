@@ -19,6 +19,7 @@
 #include "event_loop/timer_poll_source.h"
 #include "input/input_grab.h"
 #include "input/raw_keyboard.h"
+#include "platform/clipboard.h"
 #include "platform/desktop_integration.h"
 #include "platform/file_portal.h"
 #include "render/animation/animation_manager.h"
@@ -186,6 +187,9 @@ int coffret::runApplication(const Launch& launch) {
     } else {
       Hypervisor hypervisor;
       FilePortal portal;
+      const auto serial = [&connection] { return connection.lastKeyboardSurface() ? connection.lastInputSerial() : 0; };
+      const auto clipboard = WaylandClipboard::clipboard(connection.display(), desktop.dataDeviceManager(), connection.seat(), serial);
+      Input::setTextClipboard(clipboard.get());
       MainWindow window({
           .connection = connection,
           .renderer = renderer,
@@ -194,6 +198,14 @@ int coffret::runApplication(const Launch& launch) {
           .hypervisor = hypervisor,
           .grab = grab,
           .portal = portal,
+          .setClipboard = [&clipboard](std::string text) { clipboard->setClipboardText(std::move(text)); },
+      });
+      clipboard->setOnForeign([&clipboard, &window] {
+        clipboard->requestClipboardText([&window](std::optional<std::string> text) {
+          if (text && !text->empty()) {
+            window.hostCopied(*text);
+          }
+        });
       });
       handle(window);
       connection.setKeyboardEventCallback([&window](const KeyboardEvent& event) { window.keyboard(event); });
@@ -210,6 +222,8 @@ int coffret::runApplication(const Launch& launch) {
         window.action(launch.action, launch.parameter);
       }
       runLoop(window);
+      clipboard->setOnForeign({});
+      Input::setTextClipboard(nullptr);
     }
     renderer.setAsyncTextureCache(nullptr);
     textInput.cleanup();

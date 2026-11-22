@@ -234,8 +234,20 @@ void coffret::MainWindow::openTab(const std::string& uuid) {
     auto tab = std::make_unique<Tab>();
     tab->uuid = uuid;
     tab->console = std::make_unique<ConsoleView>(
-        ConsoleView::Host{.surface = m_surface, .grab = m_services.grab, .changed = [this] { requestUpdate(); }}
+        ConsoleView::Host{
+            .surface = m_surface,
+            .grab = m_services.grab,
+            .changed = [this] { requestUpdate(); },
+            .guestCopied =
+                [this](std::string text) {
+                  m_hostClipboard = text;
+                  if (m_services.setClipboard) {
+                    m_services.setClipboard(std::move(text));
+                  }
+                },
+        }
     );
+    tab->console->hostCopied(m_hostClipboard);
     tab->console->setActive(false);
     m_tabs.push_back(std::move(tab));
   }
@@ -644,6 +656,11 @@ std::string coffret::MainWindow::describe() const {
   if (!m_message.empty()) {
     text += std::format("message: {}\n", m_message);
   }
+  if (!m_hostClipboard.empty()) {
+    std::string start = m_hostClipboard.substr(0, 60);
+    std::ranges::replace(start, '\n', ' ');
+    text += std::format("clipboard: {} bytes: {}\n", m_hostClipboard.size(), start);
+  }
   text += std::format("fullscreen: {}\n", m_surface.fullscreen());
   return text;
 }
@@ -691,6 +708,9 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     m_query = lower(parameter);
     m_listStale = true;
     requestUpdate();
+  } else if (name == "clipboard") {
+    // As if the host had copied this text: for tests without the keyboard.
+    hostCopied(parameter);
   } else if (name == "details") {
     if (Tab* tab = currentTab()) {
       tab->details = !tab->details;
@@ -791,6 +811,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       return false;
     }
     console->clickAt(x, y);
+  } else if (console && name == "shot") {
+    console->dumpTo(parameter);
   } else if (console && name == "grab") {
     console->grab();
   } else if (console && name == "release") {
@@ -1235,6 +1257,14 @@ void coffret::MainWindow::prepare() {
 }
 
 // ── Input ────────────────────────────────────────────────────────────────────
+
+void coffret::MainWindow::hostCopied(const std::string& text) {
+  m_hostClipboard = text;
+  // Every open machine may paste it, as every window of the desktop may.
+  for (auto& tab : m_tabs) {
+    tab->console->hostCopied(text);
+  }
+}
 
 void coffret::MainWindow::rawKey(std::uint32_t evdev, bool pressed) {
   if (ConsoleView* console = shownConsole()) {

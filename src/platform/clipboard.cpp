@@ -87,7 +87,11 @@ struct coffret::WaylandClipboard::State : std::enable_shared_from_this<State> {
     if (selected != offer) {
       discard(std::exchange(selected, offer));
     }
+    if (offer && !source && foreign) {
+      foreign();
+    }
   }
+  std::function<void()> foreign;
   void send(int fd) { sendText(text.value_or(std::string()), fd); }
   void cancelled(void* cancelledSource) {
     if (source == cancelledSource) {
@@ -345,3 +349,5 @@ void coffret::WaylandClipboard::requestClipboardText(std::function<void(std::opt
   }
   state.receive(std::move(callback));
 }
+
+void coffret::WaylandClipboard::setOnForeign(std::function<void()> changed) { m_state->foreign = std::move(changed); }

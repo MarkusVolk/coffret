@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -98,6 +99,9 @@ namespace coffret {
 
     mutable std::mutex m_mutex;
     Scanout m_scanout;
+    // A GPU buffer QEMU has named but not yet said to be drawn: shown from its first update on.
+    std::optional<Scanout> m_pending;
+    std::chrono::steady_clock::time_point m_pendingSince{};
     Rect m_damage;
     GuestCursor m_cursor;
     std::uint64_t m_nextSerial = 1;

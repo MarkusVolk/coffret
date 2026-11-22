@@ -21,11 +21,17 @@ namespace coffret {
       std::function<void(const std::string& why)> closed;
       // The guest's pointer device changed: a tablet takes positions, a mouse takes movements.
       std::function<void(bool absolute)> pointerMode;
+      // The guest copied this text.
+      std::function<void(std::string text)> guestClipboard;
     };
 
     // busFd is a connected socket of QEMU's peer-to-peer display bus; it is owned from here on.
     QemuDisplay(int busFd, std::shared_ptr<FrameStore> frames, Callbacks callbacks);
     ~QemuDisplay();
+    // Offers a text to the guest as its clipboard. Does nothing for a machine without the
+    // clipboard channel or a guest without spice-vdagent.
+    void offerClipboard(std::string text);
+
     QemuDisplay(const QemuDisplay&) = delete;
     QemuDisplay& operator=(const QemuDisplay&) = delete;
 

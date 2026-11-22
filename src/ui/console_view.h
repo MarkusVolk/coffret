@@ -31,6 +31,8 @@ namespace coffret {
       InputGrab& grab;
       // Something the window shows about the console changed.
       std::function<void()> changed;
+      // The guest copied a text: it becomes the host's clipboard.
+      std::function<void(std::string)> guestCopied = {};
     };
 
     explicit ConsoleView(Host host);
@@ -65,6 +67,10 @@ namespace coffret {
     void grab();
     void release();
     bool grabbed() const noexcept { return m_grabbed; }
+    // The guest's picture into a PPM file, at the next frame.
+    void dumpTo(const std::string& path);
+    // What the host has in its clipboard, for the guest to paste.
+    void hostCopied(std::string text);
     // A click at a place of the guest's screen, in its pixels: for tests without a mouse.
     void clickAt(std::uint32_t x, std::uint32_t y, std::uint32_t button = 0);
     // Keys pressed in this order and released in reverse, e.g. Ctrl+Alt+Del.
@@ -82,6 +88,8 @@ namespace coffret {
     std::unique_ptr<QemuDisplay> m_display;
     ConsoleNode* m_node = nullptr;
     std::string m_problem;
+    // The text last shared with the guest, in either direction.
+    std::string m_hostText;
     bool m_ready = false;
     bool m_active = true;
     // The size last asked of the guest, in guest pixels.

@@ -42,6 +42,8 @@ namespace coffret {
       Hypervisor& hypervisor;
       InputGrab& grab;
       FilePortal& portal;
+      // Puts a text into the host's clipboard.
+      std::function<void(std::string)> setClipboard;
     };
 
     explicit MainWindow(Services services);
@@ -58,6 +60,8 @@ namespace coffret {
     void keyboard(const KeyboardEvent& event);
     void pointer(const PointerEvent& event);
     void focus(wl_surface* surface, bool entered);
+    // The host's clipboard has this text now.
+    void hostCopied(const std::string& text);
     // Keys as the keyboard sends them, for the guest.
     void rawKey(std::uint32_t evdev, bool pressed);
 
@@ -163,6 +167,7 @@ namespace coffret {
     std::vector<std::pair<std::string, std::string>> m_waiting;
     std::string m_query;
     std::string m_message;
+    std::string m_hostClipboard;
     // The machine whose snapshots the page has.
     std::string m_snapshotsOf;
     bool m_listStale = true;

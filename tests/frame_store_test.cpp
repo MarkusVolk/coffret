@@ -1,6 +1,8 @@
 #include "check.h"
 #include "display/frame_store.h"
 
+#include <chrono>
+#include <thread>
 #include <vector>
 
 int main() {
@@ -43,6 +45,29 @@ int main() {
   CHECK(third.damage.empty());
   store.disable();
   CHECK(store.take().scanout.kind == coffret::Scanout::Kind::None);
+
+  // A GPU buffer shows at once when nothing is shown; the next one waits for its first update.
+  const auto buffer = [](std::uint32_t width) {
+    coffret::Scanout scanout;
+    scanout.width = scanout.backingWidth = width;
+    scanout.height = scanout.backingHeight = 10;
+    return scanout;
+  };
+  changes = 0;
+  store.setDmabuf(buffer(100));
+  CHECK(changes == 1 && store.take().scanout.width == 100);
+  store.setDmabuf(buffer(200));
+  CHECK(changes == 1 && store.take().scanout.width == 100);
+  store.damage({0, 0, 200, 10});
+  CHECK(changes == 2);
+  const auto flipped = store.take();
+  CHECK(flipped.scanout.width == 200 && flipped.scanout.kind == coffret::Scanout::Kind::Dmabuf);
+  // Without an update it shows after a moment, at the next look.
+  store.setDmabuf(buffer(300));
+  CHECK(store.take().scanout.width == 200);
+  std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  CHECK(store.take().scanout.width == 300);
+  store.disable();
 
   store.setCursor(2, 2, 1, 1, std::vector<std::uint8_t>(16));
   store.moveCursor(10, 20, true);

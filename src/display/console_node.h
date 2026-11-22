@@ -31,9 +31,14 @@ namespace coffret {
     };
     Stats stats() const { return m_stats; }
 
+    // Writes the guest's picture as it is, not as the window shows it, to a PPM file at the next
+    // draw: for tests, and the start of a thumbnail.
+    void dumpTo(std::string path) { m_dumpPath = std::move(path); }
+
   private:
     std::shared_ptr<FrameStore> m_frames;
     std::uint64_t m_id;
     mutable Stats m_stats;
+    mutable std::string m_dumpPath;
   };
 } // namespace coffret

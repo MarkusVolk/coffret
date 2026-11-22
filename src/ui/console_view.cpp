@@ -91,6 +91,9 @@ void coffret::ConsoleView::attach(int busFd) {
                 m_ready = true;
                 m_askedWidth = m_askedHeight = 0;
                 requestGuestSize();
+                if (!m_hostText.empty()) {
+                  m_display->offerClipboard(m_hostText);
+                }
                 m_host.changed();
               },
           .closed =
@@ -109,8 +112,35 @@ void coffret::ConsoleView::attach(int busFd) {
                 }
                 m_host.changed();
               },
+          .guestClipboard =
+              [this](std::string text) {
+                kLog.debug("the guest copied {} bytes", text.size());
+                // Not offered back to the guest as if the host had copied it.
+                m_hostText = text;
+                if (m_host.guestCopied) {
+                  m_host.guestCopied(std::move(text));
+                }
+              },
       }
   );
+}
+
+void coffret::ConsoleView::dumpTo(const std::string& path) {
+  if (m_node) {
+    m_node->dumpTo(path);
+    m_node->markPaintDirty();
+    m_host.surface.requestRedraw();
+  }
+}
+
+void coffret::ConsoleView::hostCopied(std::string text) {
+  if (text == m_hostText) {
+    return;
+  }
+  m_hostText = std::move(text);
+  if (m_display && m_ready) {
+    m_display->offerClipboard(m_hostText);
+  }
 }
 
 void coffret::ConsoleView::detach() {
