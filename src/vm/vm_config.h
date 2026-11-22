@@ -61,6 +61,14 @@ namespace coffret {
     bool operator==(const UsbDevice&) const = default;
   };
 
+  // The installer's kernel booted with an answer file, until the installation is done.
+  struct DirectBoot {
+    std::string kernel;
+    std::string initrd;
+    std::string cmdline;
+    bool operator==(const DirectBoot&) const = default;
+  };
+
   // A virtual machine as coffret sets it up. Everything else in a libvirt domain is left as it is.
   struct VmConfig {
     std::string name;
@@ -87,6 +95,9 @@ namespace coffret {
     std::vector<Nic> nics;
     std::vector<SharedFolder> folders;
     std::vector<UsbDevice> usbDevices;
+    // Set while an unattended installation runs: the machine then stops instead of rebooting, so
+    // coffret sees the end and boots it from its disk.
+    DirectBoot install;
 
     // The guest renders on the host's GPU (virgl); its picture reaches the window without a copy.
     bool accel3d = true;

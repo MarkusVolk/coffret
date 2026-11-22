@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class AnimationManager;
@@ -109,6 +110,7 @@ namespace coffret {
     void define(const VmConfig& config, std::function<void()> undo = {});
     void removeMachine(const std::string& uuid, bool deleteFiles);
     void applySettings(const VmConfig& config);
+    void finishInstall(const std::string& uuid);
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
     void cloneMachine(const std::string& name, bool linked);
@@ -171,6 +173,18 @@ namespace coffret {
     // What the file is: something to install from, or a disk that has a system on it.
     SourceKind m_newSource = SourceKind::Unknown;
     Toggle* m_newInPlace = nullptr;
+    // An unattended installation: offered for media libosinfo can answer the installer of.
+    Flex* m_newUnattendedRow = nullptr;
+    Flex* m_newUserRow = nullptr;
+    Flex* m_newPasswordRow = nullptr;
+    Input* m_newUser = nullptr;
+    Toggle* m_newUnattendedToggle = nullptr;
+    Input* m_newPassword = nullptr;
+    bool m_newUnattendedPossible = false;
+    bool m_newUnattended = true;
+    GuestSetup m_hostSetup;
+    // Machines seen running their unattended installation; once one stops, it is booted from its disk.
+    std::unordered_set<std::string> m_installing;
     Flex* m_newInPlaceRow = nullptr;
     Flex* m_newDiskRow = nullptr;
     bool m_newKeepInPlace = false;

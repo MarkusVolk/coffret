@@ -244,6 +244,13 @@ namespace {
     // The boot order is each disk's own, see applyDisks().
     while (os.remove_child("boot")) {
     }
+    const bool installing = !config.install.kernel.empty();
+    for (const auto& [name, value] : {std::pair{"kernel", config.install.kernel}, {"initrd", config.install.initrd}, {"cmdline", config.install.cmdline}}) {
+      if (xml_node node = present(os, name, installing && !value.empty())) {
+        setText(node, value);
+      }
+    }
+    setText(ensure(domain, "on_reboot"), installing ? "destroy" : "restart");
     xml_node features = ensure(domain, "features");
     xml_node smm = present(features, "smm", secure);
     if (smm) {
@@ -704,6 +711,7 @@ std::expected<coffret::VmConfig, std::string> coffret::readDomainXml(std::string
     }
   }
   config.nvramPath = os.child_value("nvram");
+  config.install = {.kernel = os.child_value("kernel"), .initrd = os.child_value("initrd"), .cmdline = os.child_value("cmdline")};
   // A firmware libvirt picked is its to pick again; one named outright stays.
   if (uefi && !os.attribute("firmware")) {
     config.firmwareCode = os.child_value("loader");

@@ -1,10 +1,12 @@
 #pragma once
 
+#include "osinfo/install_media.h"
 #include "vm/clone_plan.h"
 #include "vm/vm_config.h"
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +36,8 @@ namespace coffret {
     unsigned memoryMiB = 4096;
     unsigned cpus = 2;
     std::uint64_t diskBytes = 40ULL << 30;
+    // Installed by libosinfo's answers to the installer instead of by hand.
+    std::optional<GuestSetup> unattended;
   };
 
   // What a file is that a machine could be made from.

@@ -1,6 +1,7 @@
 #include "vm/machine_factory.h"
 
 #include "fs/xdg_dirs.h"
+#include "osinfo/answer_file.h"
 #include "storage/disk_image.h"
 #include "storage/process.h"
 #include "vm/firmware_store.h"
@@ -145,6 +146,18 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachi
   // Windows has no driver for it out of the box.
   config.accel3d = !config.renderNode.empty() && request.kind != GuestKind::Windows;
   config.tpm = request.kind == GuestKind::Windows;
+  if (request.unattended) {
+    GuestSetup setup = *request.unattended;
+    if (setup.hostname.empty()) {
+      setup.hostname = guestHostname(request.name);
+    }
+    const auto boot = prepareUnattended(iso.string(), setup, folder.string());
+    if (!boot) {
+      fs::remove_all(folder, error);
+      return std::unexpected(boot.error());
+    }
+    config.install = *boot;
+  }
   return config;
 }
 

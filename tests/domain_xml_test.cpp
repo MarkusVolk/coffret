@@ -230,6 +230,14 @@ int main() {
   CHECK(!coffret::parsePortForwards("tcp:70000:22").has_value());
   CHECK(!coffret::parsePortForwards("icmp:1:1").has_value());
 
+  // An unattended installation boots the installer's kernel and stops instead of rebooting.
+  coffret::VmConfig installing = config;
+  installing.install = {.kernel = "/m/install-kernel", .initrd = "/m/install-initrd", .cmdline = "debconf/priority=critical"};
+  const std::string installXml = coffret::buildDomainXml(installing, environment);
+  CHECK(installXml.find("<on_reboot>destroy</on_reboot>") != std::string::npos);
+  CHECK((coffret::readDomainXml(installXml)->install == installing.install));
+  const auto done = coffret::updateDomainXml(installXml, config, environment);
+  CHECK(done.has_value() && done->find("kernel") == std::string::npos && done->find("<on_reboot>restart</on_reboot>") != std::string::npos);
   CHECK(!coffret::readDomainXml("<network/>").has_value());
   CHECK(!coffret::readDomainXml("not xml <").has_value());
   CHECK(!coffret::updateDomainXml("<x/>", config, environment).has_value());

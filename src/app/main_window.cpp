@@ -182,6 +182,16 @@ coffret::ConsoleView* coffret::MainWindow::shownConsole() {
 void coffret::MainWindow::machinesChanged() {
   m_listStale = true;
   m_tabsStale = true;
+  for (const auto& machine : m_services.hypervisor.machines()) {
+    if (machine.config.install.kernel.empty()) {
+      m_installing.erase(machine.uuid);
+    } else if (isActive(machine.state)) {
+      m_installing.insert(machine.uuid);
+    } else if (m_installing.erase(machine.uuid) != 0) {
+      kLog.info("install: {} stopped", machine.name);
+      finishInstall(machine.uuid);
+    }
+  }
   // A machine that stopped has given its devices back.
   for (auto it = m_usbConnected.begin(); it != m_usbConnected.end();) {
     const Machine* machine = m_services.hypervisor.find(it->first);
@@ -388,7 +398,7 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
   }
   m_services.hypervisor.define(
       buildDomainXml(config, environment()),
-      [this, alive, undo = std::move(undo)](std::expected<std::string, std::string> uuid) {
+      [this, alive, undo = std::move(undo), install = !config.install.kernel.empty()](std::expected<std::string, std::string> uuid) {
         if (alive.expired()) {
           return;
         }
@@ -396,8 +406,15 @@ void coffret::MainWindow::define(const VmConfig& config, std::function<void()> u
         if (uuid) {
           m_message.clear();
           m_newShown = false;
+          if (m_newPassword) {
+            m_newPassword->setValue("");
+          }
           // Shown as soon as the list has it.
           m_openWhenKnown = *uuid;
+          // Nobody needs to be at an unattended installation, so it begins at once.
+          if (install) {
+            run("start", *uuid, &Hypervisor::start);
+          }
         } else {
           // What was set up for a machine that does not exist is of no use.
           undo();
@@ -461,6 +478,50 @@ void coffret::MainWindow::applySettings(const VmConfig& wanted) {
         m_message = uuid ? "" : uuid.error();
         requestUpdate();
       }
+    });
+  });
+}
+
+void coffret::MainWindow::finishInstall(const std::string& uuid) {
+  const Machine* machine = m_services.hypervisor.find(uuid);
+  if (!machine) {
+    return;
+  }
+  // The installer stopped the machine where it would have rebooted: from now on it boots its disk.
+  VmConfig config = machine->config;
+  const DirectBoot used = std::exchange(config.install, {});
+  for (auto& disk : config.disks) {
+    if (disk.cdrom) {
+      disk.path.clear();
+    }
+  }
+  std::weak_ptr<int> alive = m_alive;
+  m_services.hypervisor.xml(uuid, false, [this, alive, uuid, config, used](std::expected<std::string, std::string> xml) {
+    if (alive.expired()) {
+      return;
+    }
+    const auto updated = xml.and_then([&](const std::string& text) { return updateDomainXml(text, config, environment()); });
+    if (!updated) {
+      m_message = updated.error();
+      kLog.warn("install: {}", m_message);
+      requestUpdate();
+      return;
+    }
+    m_services.hypervisor.define(*updated, [this, alive, uuid, used](std::expected<std::string, std::string> defined) {
+      if (alive.expired()) {
+        return;
+      }
+      if (!defined) {
+        m_message = defined.error();
+        kLog.warn("install: {}", m_message);
+        requestUpdate();
+        return;
+      }
+      kLog.info("install: done, the machine boots from its disk now");
+      std::error_code error;
+      std::filesystem::remove(used.kernel, error);
+      std::filesystem::remove(used.initrd, error);
+      run("start", uuid, &Hypervisor::start);
     });
   });
 }
@@ -705,6 +766,7 @@ void coffret::MainWindow::setInstallMedia(const std::string& iso) {
   }
   m_newMediaPath = iso;
   m_newOsId.clear();
+  m_newUnattendedPossible = false;
   m_newSource = SourceKind::Unknown;
   m_newKind = GuestKind::Linux;
   if (m_newDetected) {
@@ -738,6 +800,7 @@ void coffret::MainWindow::setInstallMedia(const std::string& iso) {
           const InstallMedia& media = *looked.media;
           m_newOsId = media.id;
           m_newKind = media.kind;
+          m_newUnattendedPossible = media.unattended;
           name = media.name;
           m_newDetected->setText(std::format("This is {}, to install from.", media.name));
           // At least what the system's makers recommend, and not less than a desktop is comfortable with.
@@ -788,6 +851,20 @@ void coffret::MainWindow::createNew() {
   request.memoryMiB = static_cast<unsigned>(m_newMemory->value()) * 1024;
   request.cpus = static_cast<unsigned>(m_newCpus->value());
   request.diskBytes = static_cast<std::uint64_t>(m_newDisk->value()) << 30;
+  if (m_newUnattendedPossible && m_newUnattended) {
+    GuestSetup setup = m_hostSetup;
+    setup.user = m_newUser->value();
+    setup.password = m_newPassword->value();
+    if (setup.user.empty() || setup.password.empty()) {
+      m_message = "An installation without anybody at it needs a user name and a password.";
+      requestUpdate();
+      return;
+    }
+    if (setup.user != m_hostSetup.user) {
+      setup.realName.clear();
+    }
+    request.unattended = std::move(setup);
+  }
   if (m_services.hypervisor.find(request.name) || std::ranges::any_of(m_services.hypervisor.machines(), [&](const Machine& machine) {
         return machine.name == request.name;
       })) {
@@ -985,6 +1062,16 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     applySettings(config);
   } else if (name == "new") {
     showNew(parameter);
+  } else if (name == "finish-install") {
+    if (const Machine* machine = machineFor(parameter)) {
+      finishInstall(machine->uuid);
+    }
+  } else if (name == "unattended") {
+    m_newUnattended = parameter != "off";
+  } else if (name == "user" && m_newUser) {
+    m_newUser->setValue(parameter);
+  } else if (name == "password" && m_newPassword) {
+    m_newPassword->setValue(parameter);
   } else if (name == "create" || name == "create-in-place") {
     m_newKeepInPlace = name == "create-in-place";
     createNew();
@@ -1312,6 +1399,45 @@ void coffret::MainWindow::build() {
     m_newInPlaceRow = row.get();
     fresh->addChild(std::move(row));
   }
+  m_hostSetup = hostGuestSetup();
+  {
+    auto row = field(
+        "Install automatically",
+        ui::row(
+            {.align = FlexAlign::Center, .gap = Style::spaceMd, .flexGrow = 1.0F},
+            ui::toggle({.out = &m_newUnattendedToggle, .checked = true, .onChange = [this](bool on) {
+                          m_newUnattended = on;
+                          requestUpdate();
+                        }}),
+            plainLabel({
+                .text = std::format(
+                    "Nobody needs to be at it. The guest gets keyboard {}, language {} and time zone {} of this computer.",
+                    m_hostSetup.keyboard, m_hostSetup.language, m_hostSetup.timezone
+                ),
+                .fontSize = Style::fontSizeCaption,
+                .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+                .flexGrow = 1.0F,
+            })
+        )
+    );
+    m_newUnattendedRow = row.get();
+    fresh->addChild(std::move(row));
+  }
+  {
+    auto row = field("User name", ui::input({.out = &m_newUser, .value = m_hostSetup.user, .flexGrow = 1.0F}));
+    m_newUserRow = row.get();
+    fresh->addChild(std::move(row));
+  }
+  {
+    auto row = field(
+        "Password",
+        ui::input({.out = &m_newPassword, .placeholder = "Also the guest's root password", .flexGrow = 1.0F, .configure = [](Input& input) {
+                     input.setPasswordMode(true);
+                   }})
+    );
+    m_newPasswordRow = row.get();
+    fresh->addChild(std::move(row));
+  }
   fresh->addChild(ui::row(
       {.align = FlexAlign::Center, .gap = Style::spaceSm},
       ui::button({.out = &m_newCreate, .text = "Create", .glyph = "plus", .variant = ButtonVariant::Primary, .onClick = [this] { createNew(); }}),
@@ -1440,6 +1566,11 @@ void coffret::MainWindow::syncPage() {
   m_newCreate->setEnabled(!m_creating && !m_newName->value().empty() && !m_newMediaPath.empty() && m_newSource != SourceKind::Unknown);
   show(m_newDiskRow, m_newSource != SourceKind::DiskImage);
   show(m_newInPlaceRow, m_newSource == SourceKind::DiskImage);
+  const bool unattended = m_newSource == SourceKind::InstallMedium && m_newUnattendedPossible;
+  show(m_newUnattendedRow, unattended);
+  show(m_newUserRow, unattended && m_newUnattended);
+  show(m_newPasswordRow, unattended && m_newUnattended);
+  m_newUnattendedToggle->setCheckedImmediate(m_newUnattended);
   m_newCreate->setText(m_creating ? "Creating …" : "Create");
   show(m_machinePage, machine && !console);
   if (machine && !console) {
