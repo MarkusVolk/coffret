@@ -139,6 +139,7 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
                 const bool windows = m_edit.kind == GuestKind::Windows;
                 m_edit.venus = windows ? on : m_edit.venus && on;
                 m_edit.neptune = windows && on;
+                m_venus->setChecked(m_edit.venus);
                 edited();
               },
       })
