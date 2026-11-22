@@ -1077,6 +1077,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
       config.cpus = static_cast<unsigned>(std::strtoul(value.c_str(), nullptr, 10));
     } else if (key == "3d") {
       config.accel3d = value == "on";
+    } else if (key == "venus") {
+      config.venus = value == "on";
     } else if (key == "sound") {
       config.sound = value == "on";
     } else if (key == "tpm") {

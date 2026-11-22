@@ -143,6 +143,17 @@ coffret::MachinePage::MachinePage(Callbacks callbacks) : m_callbacks(std::move(c
   ));
   page->addChild(field("", text("", ColorRole::OnSurfaceVariant, Style::fontSizeCaption, &m_accelNote)));
   page->addChild(field(
+      "Vulkan",
+      ui::toggle({
+          .out = &m_venus,
+          .onChange =
+              [this, edited](bool on) {
+                m_edit.venus = on && m_edit.accel3d;
+                edited();
+              },
+      })
+  ));
+  page->addChild(field(
       "Sound",
       ui::toggle({
           .out = &m_sound,
@@ -550,6 +561,7 @@ void coffret::MachinePage::fill() {
   m_memory->setValue(static_cast<int>(m_edit.memoryMiB));
   m_cpus->setValue(static_cast<int>(m_edit.cpus));
   m_accel->setCheckedImmediate(m_edit.accel3d);
+  m_venus->setCheckedImmediate(m_edit.venus);
   m_sound->setCheckedImmediate(m_edit.sound);
   m_microphone->setCheckedImmediate(m_edit.microphone);
   m_tpm->setCheckedImmediate(m_edit.tpm);
@@ -681,6 +693,7 @@ void coffret::MachinePage::sync() {
   const bool windows = m_edit.kind == GuestKind::Windows;
   m_accel->setEnabled(!windows || m_edit.accel3d);
   m_accelNote->setVisible(windows);
+  m_venus->setEnabled(m_edit.accel3d);
   m_accelNote->setText("Windows has no 3D driver for this virtual graphics card yet; it draws in 2D either way.");
   m_microphone->setEnabled(m_edit.sound);
   m_secureBoot->setEnabled(m_edit.firmware != Firmware::Bios);
