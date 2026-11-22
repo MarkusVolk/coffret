@@ -159,6 +159,8 @@ namespace coffret {
     // A machine that was just made, for its tab.
     std::string m_openWhenKnown;
     // The page for a new machine is up, instead of what the tab would show.
+    bool m_barRevealed = false;
+    bool m_pointerOverBar = false;
     bool m_newShown = false;
     bool m_creating = false;
     // The medium the fields were last filled for, and what it is.

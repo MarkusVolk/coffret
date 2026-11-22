@@ -756,6 +756,7 @@ void coffret::MainWindow::createNew() {
 
 void coffret::MainWindow::toggleFullscreen() {
   m_surface.toggleFullscreen();
+  m_barRevealed = false;
   requestUpdate();
 }
 
@@ -1396,7 +1397,12 @@ void coffret::MainWindow::syncPage() {
   show(m_consoles, console);
   show(m_sidebar, !fullscreen);
   show(m_tabBar, !fullscreen);
-  show(m_toolbar, !fullscreen && machine);
+  if (!fullscreen) {
+    m_barRevealed = false;
+  }
+  show(m_toolbar, (!fullscreen || m_barRevealed) && machine);
+  m_toolbar->setParticipatesInLayout(!fullscreen);
+  m_toolbar->setZIndex(fullscreen ? 10 : 0);
   show(m_statusBar, !fullscreen);
 
   if (machine) {
@@ -1412,6 +1418,8 @@ void coffret::MainWindow::syncPage() {
     m_resetButton->setEnabled(active);
     m_keysButton->setEnabled(console);
     m_fullscreenButton->setEnabled(console);
+    m_fullscreenButton->setGlyph(fullscreen ? "minimize" : "maximize");
+    m_fullscreenButton->setTooltip(fullscreen ? "Leave full screen (F11)" : "Full screen (F11)");
     m_detailsButton->setEnabled(isActive(state));
     m_detailsButton->setSelected(tab && tab->details && isActive(state));
   }
@@ -1441,6 +1449,9 @@ void coffret::MainWindow::prepare() {
   syncPage();
   auto& renderer = m_surface.renderTarget().renderer();
   m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())});
+  if (!m_toolbar->participatesInLayout() && m_toolbar->visible()) {
+    m_toolbar->arrange(renderer, {0, 0, static_cast<float>(m_surface.width()), kToolbarHeight});
+  }
 }
 
 // ── Input ────────────────────────────────────────────────────────────────────
@@ -1455,6 +1466,13 @@ void coffret::MainWindow::hostCopied(const std::string& text) {
 
 void coffret::MainWindow::rawKey(std::uint32_t evdev, bool pressed) {
   if (ConsoleView* console = shownConsole()) {
+    // F11 stays ours while the guest has the keyboard, else full screen has no way out.
+    if (evdev == KEY_F11 && console->grabbed()) {
+      if (pressed) {
+        toggleFullscreen();
+      }
+      return;
+    }
     console->key(evdev, pressed);
   }
 }
@@ -1503,6 +1521,22 @@ void coffret::MainWindow::pointer(const PointerEvent& event) {
     return;
   }
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+  // In full screen the toolbar comes down while the pointer touches the top edge.
+  if (console && m_surface.fullscreen() && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
+    const bool reveal = m_barRevealed ? y < kToolbarHeight + 8.0F : y < 2.0F;
+    if (reveal != m_barRevealed) {
+      m_barRevealed = reveal;
+      requestUpdate();
+    }
+  }
+  const bool overBar = m_barRevealed && y < kToolbarHeight && event.type != PointerEvent::Type::Leave;
+  if (console && overBar && !m_pointerOverBar) {
+    // The guest's pointer gives way to the host's over the bar.
+    PointerEvent leave = event;
+    leave.type = PointerEvent::Type::Leave;
+    console->pointer(leave);
+  }
+  m_pointerOverBar = overBar;
   switch (event.type) {
   case PointerEvent::Type::Enter:
     m_dispatcher.pointerEnter(x, y, event.serial);
@@ -1535,7 +1569,7 @@ void coffret::MainWindow::pointer(const PointerEvent& event) {
     );
     break;
   }
-  if (console) {
+  if (console && !overBar) {
     console->pointer(event);
   }
   requestUpdate();
