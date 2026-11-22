@@ -1,0 +1,45 @@
+#!/bin/sh
+# Lets the user who ran pkexec open one USB device, so that a machine of theirs can be given it,
+# and takes that back again: coffret-usb-acl grant|revoke BUS DEVICE VENDOR PRODUCT
+# The device must still be the one coffret listed, and hubs are refused: everything behind one
+# would go along.
+
+set -eu
+
+fail() {
+	echo "coffret-usb-acl: $*" >&2
+	exit 1
+}
+
+[ $# -eq 5 ] || fail "usage: coffret-usb-acl grant|revoke BUS DEVICE VENDOR PRODUCT"
+what=$1 bus=$2 device=$3 vendor=$4 product=$5
+uid=${PKEXEC_UID:-}
+case $uid in '' | *[!0-9]*) fail "to be run through pkexec" ;; esac
+[ "$uid" -ne 0 ] || fail "root needs no access granted"
+for number in "$bus" "$device"; do
+	case $number in '' | 0* | *[!0-9]*) fail "not a bus or device number: $number" ;; esac
+done
+for id in "$vendor" "$product"; do
+	case $id in [0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) fail "not a USB id: $id" ;; esac
+done
+
+found=
+for sysfs in /sys/bus/usb/devices/*; do
+	[ -r "$sysfs/busnum" ] && [ -r "$sysfs/devnum" ] || continue
+	if [ "$(cat "$sysfs/busnum")" = "$bus" ] && [ "$(cat "$sysfs/devnum")" = "$device" ]; then
+		found=$sysfs
+		break
+	fi
+done
+[ -n "$found" ] || fail "no USB device $bus/$device"
+[ "$(cat "$found/idVendor")" = "$vendor" ] && [ "$(cat "$found/idProduct")" = "$product" ] ||
+	fail "USB device $bus/$device is no longer $vendor:$product"
+[ "$(cat "$found/bDeviceClass")" != "09" ] || fail "USB device $bus/$device is a hub"
+
+node=$(printf '/dev/bus/usb/%03d/%03d' "$bus" "$device")
+[ -c "$node" ] || fail "$node is missing"
+case $what in
+grant) exec setfacl -m "u:$uid:rw" "$node" ;;
+revoke) exec setfacl -x "u:$uid" "$node" ;;
+*) fail "grant or revoke, not $what" ;;
+esac

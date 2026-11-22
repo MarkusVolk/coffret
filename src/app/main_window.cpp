@@ -24,6 +24,7 @@
 #include "vm/host_info.h"
 #include "vm/machine_factory.h"
 #include "app/worker.h"
+#include "storage/process.h"
 #include "wayland/wayland_connection.h"
 
 #include <algorithm>
@@ -59,6 +60,11 @@ namespace {
     }();
     return found;
   }
+  std::string usbAclHelper() {
+    const char* override = std::getenv("COFFRET_USB_ACL");
+    return override && *override ? override : COFFRET_INSTALL_LIBEXECDIR "/coffret-usb-acl";
+  }
+
   constexpr float kSidebarWidth = 248.0F;
   constexpr float kTabBarHeight = 44.0F;
   constexpr float kToolbarHeight = 48.0F;
@@ -133,7 +139,12 @@ coffret::MainWindow::MainWindow(Services services) : m_services(services), m_sur
   m_services.hypervisor.connect();
 }
 
-coffret::MainWindow::~MainWindow() { m_services.hypervisor.setOnChanged({}); }
+coffret::MainWindow::~MainWindow() {
+  m_services.hypervisor.setOnChanged({});
+  for (const auto& device : m_usbGranted) {
+    (void)runCommand(usbAccessCommand(usbAclHelper(), device, false));
+  }
+}
 
 void coffret::MainWindow::requestUpdate() { m_surface.requestLayout(); }
 
@@ -171,6 +182,18 @@ coffret::ConsoleView* coffret::MainWindow::shownConsole() {
 void coffret::MainWindow::machinesChanged() {
   m_listStale = true;
   m_tabsStale = true;
+  // A machine that stopped has given its devices back.
+  for (auto it = m_usbConnected.begin(); it != m_usbConnected.end();) {
+    const Machine* machine = m_services.hypervisor.find(it->first);
+    if (machine && isActive(machine->state)) {
+      ++it;
+      continue;
+    }
+    for (const auto& device : it->second) {
+      revokeUsb(device);
+    }
+    it = m_usbConnected.erase(it);
+  }
   if (m_services.hypervisor.listed() && !m_waiting.empty()) {
     for (const auto& [name, parameter] : std::exchange(m_waiting, {})) {
       action(name, parameter);
@@ -538,26 +561,65 @@ void coffret::MainWindow::connectUsb(const HostUsbDevice& device, bool connect) 
     }
     auto& connected = m_usbConnected[uuid];
     if (!result) {
-      // QEMU opens the device as the user, who by default may not: that takes a rule of the system.
       m_message = result.error().find("ermission") != std::string::npos
                       ? std::format("{} could not be opened: this user has no access to USB devices.", device.name)
                       : result.error();
       kLog.warn("usb: {}", result.error());
+      if (connect) {
+        revokeUsb(device);
+      }
     } else if (connect) {
       connected.push_back(device);
     } else {
       std::erase(connected, device);
+      revokeUsb(device);
     }
     if (uuid == m_current) {
       m_machinePage->setConnectedUsb(connected);
     }
     requestUpdate();
   };
-  if (connect) {
-    m_services.hypervisor.attachDevice(uuid, usbHostdevXml(device), done);
-  } else {
+  if (!connect) {
     m_services.hypervisor.detachDevice(uuid, usbHostdevXml(device), done);
+    return;
   }
+  // QEMU opens the device as the user, who by default may not: coffret-usb-acl lets them, for this
+  // device alone and until it is taken back.
+  if (::access(usbNode(device).c_str(), R_OK | W_OK) == 0) {
+    m_services.hypervisor.attachDevice(uuid, usbHostdevXml(device), done);
+    return;
+  }
+  runInThread<std::expected<std::string, std::string>>(
+      [command = usbAccessCommand(usbAclHelper(), device, true)] { return runCommand(command); },
+      [this, alive, uuid, device, done](std::expected<std::string, std::string> granted) {
+        if (alive.expired()) {
+          return;
+        }
+        if (!granted) {
+          m_message = std::format("{} could not be opened: {}", device.name, granted.error());
+          kLog.warn("usb: {}", granted.error());
+          requestUpdate();
+          return;
+        }
+        m_usbGranted.push_back(device);
+        m_services.hypervisor.attachDevice(uuid, usbHostdevXml(device), done);
+      }
+  );
+}
+
+void coffret::MainWindow::revokeUsb(const HostUsbDevice& device) {
+  if (std::erase(m_usbGranted, device) == 0) {
+    return;
+  }
+  runInThread<bool>(
+      [command = usbAccessCommand(usbAclHelper(), device, false)] {
+        if (const auto done = runCommand(command); !done) {
+          kLog.warn("usb: {}", done.error());
+        }
+        return true;
+      },
+      [](bool) {}
+  );
 }
 
 void coffret::MainWindow::cloneMachine(const std::string& name, bool linked) {
@@ -1383,9 +1445,6 @@ void coffret::MainWindow::syncPage() {
   if (machine && !console) {
     m_machinePage->setMachine(*machine);
     if (m_usbShownFor != machine->uuid || !isActive(machine->state)) {
-      if (!isActive(machine->state)) {
-        m_usbConnected.erase(machine->uuid);
-      }
       m_usbShownFor = machine->uuid;
       m_machinePage->setConnectedUsb(m_usbConnected[machine->uuid]);
     }

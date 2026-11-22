@@ -106,4 +106,11 @@ install_data('assets/templates/colors.toml', install_dir: get_option('datadir') 
 install_data('assets/desktop/de.flk.Coffret.desktop', install_dir: get_option('datadir') / 'applications')
 install_data('assets/icons/de.flk.Coffret.svg', install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
 install_data('data/coffret-virtiofsd', install_dir: get_option('libexecdir'), install_mode: 'rwxr-xr-x')
+install_data('data/coffret-usb-acl', install_dir: get_option('libexecdir'), install_mode: 'rwxr-xr-x')
+configure_file(
+  input: 'data/de.flk.Coffret.policy.in',
+  output: 'de.flk.Coffret.policy',
+  configuration: {'LIBEXECDIR': get_option('prefix') / get_option('libexecdir')},
+  install_dir: get_option('datadir') / 'polkit-1/actions',
+)
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/coffret')

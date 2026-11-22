@@ -113,6 +113,7 @@ namespace coffret {
     void snapshotDone(Hypervisor::Result result);
     void cloneMachine(const std::string& name, bool linked);
     void connectUsb(const HostUsbDevice& device, bool connect);
+    void revokeUsb(const HostUsbDevice& device);
     std::string describe() const;
 
     Services m_services;
@@ -182,6 +183,8 @@ namespace coffret {
     std::string m_hostClipboard;
     // The devices given to each running machine from here, by its uuid.
     std::unordered_map<std::string, std::vector<HostUsbDevice>> m_usbConnected;
+    // Devices this user was let open for a machine; taken back when the machine lets go of them.
+    std::vector<HostUsbDevice> m_usbGranted;
     std::string m_usbShownFor;
     // The machine whose snapshots the page has.
     std::string m_snapshotsOf;

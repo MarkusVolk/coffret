@@ -23,4 +23,10 @@ namespace coffret {
 
   // What libvirt needs to give the device as it is plugged in now to a machine, or take it back.
   std::string usbHostdevXml(const HostUsbDevice& device);
+
+  // The device's node, which QEMU opens as the user.
+  std::string usbNode(const HostUsbDevice& device);
+
+  // pkexec with coffret-usb-acl, which lets this user open the device or takes that back.
+  std::vector<std::string> usbAccessCommand(const std::string& helper, const HostUsbDevice& device, bool grant);
 } // namespace coffret

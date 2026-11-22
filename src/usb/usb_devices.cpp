@@ -51,6 +51,22 @@ std::vector<coffret::HostUsbDevice> coffret::listUsbDevices(const std::string& s
   return devices;
 }
 
+std::string coffret::usbNode(const HostUsbDevice& device) {
+  return std::format("/dev/bus/usb/{:03}/{:03}", device.bus, device.device);
+}
+
+std::vector<std::string> coffret::usbAccessCommand(const std::string& helper, const HostUsbDevice& device, bool grant) {
+  return {
+      "pkexec",
+      helper,
+      grant ? "grant" : "revoke",
+      std::to_string(device.bus),
+      std::to_string(device.device),
+      std::format("{:04x}", device.vendor),
+      std::format("{:04x}", device.product),
+  };
+}
+
 std::string coffret::usbHostdevXml(const HostUsbDevice& device) {
   return std::format(
       "<hostdev mode='subsystem' type='usb' managed='yes'><source><vendor id='{:#06x}'/><product id='{:#06x}'/>"

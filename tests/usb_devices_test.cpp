@@ -39,6 +39,10 @@ int main() {
   CHECK(coffret::usbHostdevXml(devices[1])
         == "<hostdev mode='subsystem' type='usb' managed='yes'><source><vendor id='0x090c'/><product id='0x2320'/>"
            "<address bus='2' device='12'/></source></hostdev>");
+  CHECK(coffret::usbNode(devices[1]) == "/dev/bus/usb/002/012");
+  CHECK((coffret::usbAccessCommand("/usr/libexec/coffret-usb-acl", devices[1], true)
+         == std::vector<std::string>{"pkexec", "/usr/libexec/coffret-usb-acl", "grant", "2", "12", "090c", "2320"}));
+  CHECK(coffret::usbAccessCommand("h", devices[0], false)[2] == "revoke");
   CHECK(coffret::listUsbDevices((root / "none").string()).empty());
   std::filesystem::remove_all(root);
   return 0;
