@@ -17,6 +17,7 @@ class Button;
 class Flex;
 class Input;
 class Label;
+class Stepper;
 class RenderContext;
 class TextInputService;
 class WaylandConnection;
@@ -24,7 +25,9 @@ struct KeyboardEvent;
 struct PointerEvent;
 
 namespace coffret {
+  class FilePortal;
   class InputGrab;
+  struct InstallMedia;
 
   // The window: the library of machines on the left, a tab per opened machine, and for each its
   // summary while it is off and its console while it runs.
@@ -37,6 +40,7 @@ namespace coffret {
       AnimationManager& animations;
       Hypervisor& hypervisor;
       InputGrab& grab;
+      FilePortal& portal;
     };
 
     explicit MainWindow(Services services);
@@ -88,6 +92,10 @@ namespace coffret {
     void run(const std::string& what, const std::string& uuid, void (Hypervisor::*call)(const std::string&, Hypervisor::Done));
     void toggleFullscreen();
     void importImage(ImageImport request);
+    void showNew(const std::string& iso);
+    void setInstallMedia(const std::string& iso);
+    void createNew();
+    void define(const VmConfig& config);
     std::string describe() const;
 
     Services m_services;
@@ -118,6 +126,14 @@ namespace coffret {
     Label* m_summaryName = nullptr;
     Label* m_summaryState = nullptr;
     Flex* m_summaryRows = nullptr;
+    Flex* m_newPage = nullptr;
+    Input* m_newIso = nullptr;
+    Label* m_newDetected = nullptr;
+    Input* m_newName = nullptr;
+    Stepper* m_newMemory = nullptr;
+    Stepper* m_newCpus = nullptr;
+    Stepper* m_newDisk = nullptr;
+    Button* m_newCreate = nullptr;
     Flex* m_consoles = nullptr;
     Flex* m_statusBar = nullptr;
     Label* m_status = nullptr;
@@ -127,6 +143,15 @@ namespace coffret {
     std::string m_current;
     // A machine that was just made, for its tab.
     std::string m_openWhenKnown;
+    // The page for a new machine is up, instead of what the tab would show.
+    bool m_newShown = false;
+    bool m_creating = false;
+    // The medium the fields were last filled for, and what it is.
+    std::string m_newMediaPath;
+    GuestKind m_newKind = GuestKind::Linux;
+    std::string m_newOsId;
+    // The name was typed by the user and is not replaced by the medium's.
+    bool m_newNameTyped = false;
     // Actions that arrived before the machines were known.
     std::vector<std::pair<std::string, std::string>> m_waiting;
     std::string m_query;

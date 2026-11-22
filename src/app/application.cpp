@@ -20,6 +20,7 @@
 #include "input/input_grab.h"
 #include "input/raw_keyboard.h"
 #include "platform/desktop_integration.h"
+#include "platform/file_portal.h"
 #include "render/animation/animation_manager.h"
 #include "render/codecs/codecs.h"
 #include "render/core/async_texture_cache.h"
@@ -184,6 +185,7 @@ int coffret::runApplication(const Launch& launch) {
       runLoop(window);
     } else {
       Hypervisor hypervisor;
+      FilePortal portal;
       MainWindow window({
           .connection = connection,
           .renderer = renderer,
@@ -191,6 +193,7 @@ int coffret::runApplication(const Launch& launch) {
           .animations = animations,
           .hypervisor = hypervisor,
           .grab = grab,
+          .portal = portal,
       });
       handle(window);
       connection.setKeyboardEventCallback([&window](const KeyboardEvent& event) { window.keyboard(event); });

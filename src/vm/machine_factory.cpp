@@ -97,3 +97,51 @@ std::expected<coffret::VmConfig, std::string> coffret::prepareImport(const Image
   config.accel3d = !config.renderNode.empty();
   return config;
 }
+
+std::expected<coffret::VmConfig, std::string> coffret::prepareNew(const NewMachine& request) {
+  namespace fs = std::filesystem;
+  std::error_code error;
+  if (request.name.empty()) {
+    return std::unexpected(std::string("The machine needs a name."));
+  }
+  const fs::path iso = fs::absolute(request.iso, error);
+  if (!fs::is_regular_file(iso, error)) {
+    return std::unexpected(std::format("{} is not an installation medium.", request.iso));
+  }
+  const fs::path folder = machineFolder(request.name);
+  if (fs::exists(folder, error)) {
+    return std::unexpected(std::format("There is a machine folder named {} already.", folder.filename().string()));
+  }
+  // Windows 11 installs only with secure boot and a TPM; that firmware comes with the Windows stage.
+  const auto firmware = prepareFirmware(false);
+  if (!firmware) {
+    return std::unexpected(firmware.error());
+  }
+  if (!fs::create_directories(folder, error)) {
+    return std::unexpected(std::format("{} cannot be created: {}", folder.string(), error.message()));
+  }
+  const fs::path disk = folder / "disk.qcow2";
+  if (const auto made = runCommand(createImageCommand(disk.string(), request.diskBytes)); !made) {
+    fs::remove_all(folder, error);
+    return std::unexpected(made.error());
+  }
+  VmConfig config;
+  config.name = request.name;
+  config.kind = request.kind;
+  config.osId = request.osId;
+  config.memoryMiB = request.memoryMiB;
+  config.cpus = request.cpus;
+  config.firmware = Firmware::Uefi;
+  config.firmwareCode = firmware->code;
+  config.nvramTemplate = firmware->variables;
+  config.nvramPath = (folder / "vars.qcow2").string();
+  // An empty disk does not boot: the firmware goes on to the medium, and to the disk once the system is on it.
+  config.disks.push_back({.path = disk.string(), .bootOrder = 1});
+  config.disks.push_back({.path = iso.string(), .format = "raw", .bus = DiskBus::Sata, .cdrom = true, .readOnly = true, .bootOrder = 2});
+  config.nics.emplace_back();
+  config.renderNode = defaultRenderNode();
+  // Windows has no driver for it out of the box.
+  config.accel3d = !config.renderNode.empty() && request.kind != GuestKind::Windows;
+  config.tpm = request.kind == GuestKind::Windows;
+  return config;
+}

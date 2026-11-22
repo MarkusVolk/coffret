@@ -46,6 +46,7 @@ tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 nlohmann_json = dependency('nlohmann_json')
 pugixml = dependency('pugixml')
 libvirt = dependency('libvirt', version: '>=9.10')
+libosinfo = dependency('libosinfo-1.0')
 egl = dependency('egl')
 glesv2 = dependency('glesv2')
 

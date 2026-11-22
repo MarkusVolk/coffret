@@ -5,14 +5,18 @@
 #include "core/log.h"
 #include "core/ui_phase.h"
 #include "input/input_grab.h"
+#include "osinfo/install_media.h"
+#include "platform/file_portal.h"
 #include "render/render_context.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/input.h"
 #include "ui/controls/label.h"
+#include "ui/controls/stepper.h"
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "vm/domain_xml.h"
+#include "vm/host_info.h"
 #include "vm/machine_factory.h"
 #include "app/worker.h"
 #include "wayland/wayland_connection.h"
@@ -254,6 +258,7 @@ void coffret::MainWindow::openTab(const std::string& uuid) {
     old->console->setActive(false);
   }
   m_current = uuid;
+  m_newShown = false;
   m_message.clear();
   m_listStale = true;
   m_tabsStale = true;
@@ -282,6 +287,7 @@ void coffret::MainWindow::showHome() {
     old->console->setActive(false);
   }
   m_current.clear();
+  m_newShown = false;
   m_listStale = true;
   m_tabsStale = true;
   requestUpdate();
@@ -324,27 +330,130 @@ void coffret::MainWindow::importImage(ImageImport request) {
           requestUpdate();
           return;
         }
-        const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-        m_services.hypervisor.define(
-            buildDomainXml(*config, {.runtimeDir = runtime ? runtime : ""}),
-            [this, alive, folder = machineFolder(config->name)](std::expected<std::string, std::string> uuid) {
-              if (alive.expired()) {
-                return;
-              }
-              if (uuid) {
-                m_message.clear();
-                // Shown as soon as the list has it.
-                m_openWhenKnown = *uuid;
-              } else {
-                // What was set up for a machine that does not exist is of no use.
-                std::error_code error;
-                std::filesystem::remove_all(folder, error);
-                m_message = uuid.error();
-                kLog.warn("import: {}", m_message);
-              }
-              requestUpdate();
-            }
-        );
+        define(*config);
+      }
+  );
+}
+
+void coffret::MainWindow::define(const VmConfig& config) {
+  const char* runtime = std::getenv("XDG_RUNTIME_DIR");
+  std::weak_ptr<int> alive = m_alive;
+  m_services.hypervisor.define(
+      buildDomainXml(config, {.runtimeDir = runtime ? runtime : ""}),
+      [this, alive, folder = machineFolder(config.name)](std::expected<std::string, std::string> uuid) {
+        if (alive.expired()) {
+          return;
+        }
+        m_creating = false;
+        if (uuid) {
+          m_message.clear();
+          m_newShown = false;
+          // Shown as soon as the list has it.
+          m_openWhenKnown = *uuid;
+        } else {
+          // What was set up for a machine that does not exist is of no use.
+          std::error_code error;
+          std::filesystem::remove_all(folder, error);
+          m_message = uuid.error();
+          kLog.warn("define: {}", m_message);
+        }
+        requestUpdate();
+      }
+  );
+}
+
+void coffret::MainWindow::showNew(const std::string& iso) {
+  if (Tab* old = currentTab()) {
+    old->console->setActive(false);
+  }
+  m_newShown = true;
+  m_message.clear();
+  m_tabsStale = true;
+  if (!iso.empty()) {
+    if (m_newIso) {
+      m_newIso->setValue(iso);
+    }
+    setInstallMedia(iso);
+  }
+  requestUpdate();
+}
+
+void coffret::MainWindow::setInstallMedia(const std::string& iso) {
+  std::error_code error;
+  if (iso == m_newMediaPath || !std::filesystem::is_regular_file(iso, error)) {
+    return;
+  }
+  m_newMediaPath = iso;
+  m_newOsId.clear();
+  m_newKind = GuestKind::Linux;
+  if (m_newDetected) {
+    m_newDetected->setText("Looking at the medium …");
+  }
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<std::optional<InstallMedia>>(
+      [iso] { return detectInstallMedia(iso); },
+      [this, alive, iso](std::optional<InstallMedia> media) {
+        if (alive.expired() || iso != m_newMediaPath || !m_newDetected) {
+          return;
+        }
+        std::string name = std::filesystem::path(iso).stem().string();
+        if (media) {
+          m_newOsId = media->id;
+          m_newKind = media->kind;
+          name = media->name;
+          m_newDetected->setText(std::format("This is {}.", media->name));
+          // At least what the system's makers recommend, and not less than a desktop is comfortable with.
+          m_newMemory->setValue(static_cast<int>(std::clamp(std::max(media->memoryMiB, 4096U) / 1024, 1U, std::max(1U, hostMemoryMiB() / 1024))));
+          m_newCpus->setValue(static_cast<int>(std::clamp(std::max(media->cpus, 2U), 1U, hostProcessors())));
+          m_newDisk->setValue(static_cast<int>(std::max<std::uint64_t>(media->diskBytes >> 30, 40)));
+        } else {
+          m_newDetected->setText("The system on this medium is not known; the settings are general ones.");
+        }
+        if (!m_newNameTyped) {
+          m_newName->setValue(name);
+          m_newNameTyped = false;
+        }
+        requestUpdate();
+      }
+  );
+}
+
+void coffret::MainWindow::createNew() {
+  if (m_creating || !m_newName) {
+    return;
+  }
+  NewMachine request;
+  request.name = m_newName->value();
+  request.iso = m_newIso->value();
+  request.kind = m_newKind;
+  request.osId = m_newOsId;
+  request.memoryMiB = static_cast<unsigned>(m_newMemory->value()) * 1024;
+  request.cpus = static_cast<unsigned>(m_newCpus->value());
+  request.diskBytes = static_cast<std::uint64_t>(m_newDisk->value()) << 30;
+  if (m_services.hypervisor.find(request.name) || std::ranges::any_of(m_services.hypervisor.machines(), [&](const Machine& machine) {
+        return machine.name == request.name;
+      })) {
+    m_message = std::format("There is a machine named {} already.", request.name);
+    requestUpdate();
+    return;
+  }
+  m_creating = true;
+  m_message.clear();
+  requestUpdate();
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<std::expected<VmConfig, std::string>>(
+      [request = std::move(request)] { return prepareNew(request); },
+      [this, alive](std::expected<VmConfig, std::string> config) {
+        if (alive.expired()) {
+          return;
+        }
+        if (!config) {
+          m_creating = false;
+          m_message = config.error();
+          requestUpdate();
+          return;
+        }
+        define(*config);
       }
   );
 }
@@ -421,6 +530,10 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     m_query = lower(parameter);
     m_listStale = true;
     requestUpdate();
+  } else if (name == "new") {
+    showNew(parameter);
+  } else if (name == "create") {
+    createNew();
   } else if (name == "import") {
     // "<image>" or "<image>|<name>|<cdrom>": a machine from a disk image, as a copy.
     std::vector<std::string> parts;
@@ -520,6 +633,13 @@ void coffret::MainWindow::build() {
   m_list->setDirection(FlexDirection::Vertical);
   m_list->setAlign(FlexAlign::Stretch);
   m_list->setGap(2.0F);
+  sidebar->addChild(ui::button({
+      .text = "New machine",
+      .glyph = "plus",
+      .contentAlign = ButtonContentAlign::Start,
+      .variant = ButtonVariant::Ghost,
+      .onClick = [this] { showNew({}); },
+  }));
   sidebar->addChild(plainLabel({
       .out = &m_connection,
       .fontSize = Style::fontSizeCaption,
@@ -619,6 +739,80 @@ void coffret::MainWindow::build() {
   summary->addChild(ui::separator({.spacing = Style::spaceSm}));
   summary->addChild(ui::column({.out = &m_summaryRows, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   content->addChild(std::move(summary));
+
+  // A new machine from an installation medium.
+  const auto field = [](const char* name, std::unique_ptr<Node> control) {
+    return ui::row(
+        {.align = FlexAlign::Center, .gap = Style::spaceMd},
+        plainLabel({.text = std::string(name), .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant), .minWidth = 150.0F}),
+        std::move(control)
+    );
+  };
+  auto fresh = ui::column({.out = &m_newPage, .align = FlexAlign::Stretch, .gap = Style::spaceMd, .padding = Style::spaceLg, .flexGrow = 1.0F});
+  fresh->addChild(plainLabel({
+      .text = "New virtual machine",
+      .fontSize = Style::fontSizeHeader,
+      .fontWeight = FontWeight::Bold,
+      .color = colorSpecFromRole(ColorRole::OnSurface),
+  }));
+  fresh->addChild(field(
+      "Installation medium",
+      ui::row(
+          {.align = FlexAlign::Center, .gap = Style::spaceSm, .flexGrow = 1.0F},
+          ui::input({
+              .out = &m_newIso,
+              .placeholder = "An ISO image",
+              .flexGrow = 1.0F,
+              .onChange = [this](const std::string& text) { setInstallMedia(text); },
+          }),
+          ui::button({
+              .text = "Browse …",
+              .variant = ButtonVariant::Outline,
+              .onClick =
+                  [this] {
+                    if (!m_services.portal.available()) {
+                      m_message = "No file dialog is available on this desktop.";
+                      requestUpdate();
+                      return;
+                    }
+                    std::weak_ptr<int> alive = m_alive;
+                    m_services.portal.openFiles(
+                        m_surface.portalHandle(), std::filesystem::path(g_get_home_dir()),
+                        [this, alive](std::vector<std::filesystem::path> files) {
+                          if (!alive.expired() && !files.empty()) {
+                            m_newIso->setValue(files.front().string());
+                            setInstallMedia(files.front().string());
+                            requestUpdate();
+                          }
+                        }
+                    );
+                  },
+          })
+      )
+  ));
+  fresh->addChild(field("", plainLabel({.out = &m_newDetected, .fontSize = Style::fontSizeCaption, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant), .flexGrow = 1.0F})));
+  fresh->addChild(field(
+      "Name",
+      ui::input({
+          .out = &m_newName,
+          .placeholder = "What the machine is called",
+          .flexGrow = 1.0F,
+          .onChange = [this](const std::string& text) { m_newNameTyped = !text.empty(); },
+      })
+  ));
+  fresh->addChild(field("Memory", ui::stepper({.out = &m_newMemory, .minValue = 1, .maxValue = static_cast<int>(std::max(1U, hostMemoryMiB() / 1024)), .value = 4, .valueSuffix = " GiB"})));
+  fresh->addChild(field("Processors", ui::stepper({.out = &m_newCpus, .minValue = 1, .maxValue = static_cast<int>(hostProcessors()), .value = 2})));
+  fresh->addChild(field("Hard disk", ui::stepper({.out = &m_newDisk, .minValue = 8, .maxValue = 2048, .step = 8, .value = 40, .valueSuffix = " GiB"})));
+  fresh->addChild(ui::row(
+      {.align = FlexAlign::Center, .gap = Style::spaceSm},
+      ui::button({.out = &m_newCreate, .text = "Create", .glyph = "plus", .variant = ButtonVariant::Primary, .onClick = [this] { createNew(); }}),
+      ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] {
+                    m_newShown = false;
+                    m_tabsStale = true;
+                    requestUpdate();
+                  }})
+  ));
+  content->addChild(std::move(fresh));
 
   content->addChild(ui::column({.out = &m_consoles, .align = FlexAlign::Stretch, .flexGrow = 1.0F}));
 
@@ -723,8 +917,8 @@ void coffret::MainWindow::syncPage() {
       m_consoles->addChild(std::move(picture));
     }
   }
-  const Machine* machine = currentMachine();
-  Tab* tab = currentTab();
+  const Machine* machine = m_newShown ? nullptr : currentMachine();
+  Tab* tab = m_newShown ? nullptr : currentTab();
   const bool console = tab && machine && isActive(machine->state);
   const bool fullscreen = m_surface.fullscreen() && console;
   for (auto& other : m_tabs) {
@@ -732,7 +926,10 @@ void coffret::MainWindow::syncPage() {
     show(other->picture, shown);
     other->console->setActive(shown);
   }
-  show(m_home, !machine);
+  show(m_home, !machine && !m_newShown);
+  show(m_newPage, m_newShown);
+  m_newCreate->setEnabled(!m_creating && !m_newName->value().empty() && !m_newMediaPath.empty());
+  m_newCreate->setText(m_creating ? "Creating …" : "Create");
   show(m_summary, machine && !console);
   show(m_consoles, console);
   show(m_sidebar, !fullscreen);
@@ -760,7 +957,7 @@ void coffret::MainWindow::syncPage() {
       for (const auto& [name, value] : hardwareOf(machine->config)) {
         m_summaryRows->addChild(ui::row(
             {.align = FlexAlign::Start, .gap = Style::spaceMd},
-            plainLabel({.text = name, .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant), .width = 140.0F}),
+            plainLabel({.text = name, .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant), .minWidth = 150.0F}),
             plainLabel({.text = value, .fontSize = Style::fontSizeBody, .color = colorSpecFromRole(ColorRole::OnSurface), .flexGrow = 1.0F})
         ));
       }
