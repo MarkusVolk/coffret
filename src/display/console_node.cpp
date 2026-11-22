@@ -1,0 +1,321 @@
+#include "display/console_node.h"
+
+#include "core/log.h"
+#include "render/backend/render_backend.h"
+#include "render/backend/render_extension.h"
+#include "render/core/shader_program.h"
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+#include <array>
+#include <atomic>
+#include <format>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+namespace {
+  const Logger kLog("console");
+
+  constexpr char kVertexShader[] = R"(
+precision highp float;
+attribute vec2 a_position;
+uniform vec2 u_surface_size;
+uniform vec2 u_quad_size;
+uniform mat3 u_transform;
+uniform vec4 u_uv;
+varying vec2 v_uv;
+void main() {
+    vec3 pixel = u_transform * vec3(a_position * u_quad_size, 1.0);
+    vec2 normalized = pixel.xy / u_surface_size;
+    v_uv = mix(u_uv.xy, u_uv.zw, a_position);
+    gl_Position = vec4(normalized.x * 2.0 - 1.0, 1.0 - normalized.y * 2.0, 0.0, 1.0);
+}
+)";
+
+  // A guest's picture has no transparency; the X of XRGB is whatever the guest left there.
+  constexpr char kFragmentShader[] = R"(
+precision mediump float;
+uniform sampler2D u_texture;
+uniform float u_opacity;
+varying vec2 v_uv;
+void main() {
+    gl_FragColor = vec4(texture2D(u_texture, v_uv).rgb * u_opacity, u_opacity);
+}
+)";
+
+  // Nodes die without a GL context at hand; their textures are freed with the next draw.
+  std::mutex g_releasedMutex;
+  std::vector<std::uint64_t> g_released;
+  std::atomic<std::uint64_t> g_nextId{1};
+
+  struct Slot {
+    GLuint texture = 0;
+    EGLImageKHR image = EGL_NO_IMAGE_KHR;
+    std::uint64_t serial = 0;
+    std::uint32_t width = 0, height = 0;
+    bool usable = false;
+    // GL_LINEAR or GL_NEAREST once set; 0 for a texture whose filter was never set.
+    GLint filter = 0;
+  };
+
+  // The shader and the textures of every console; owned by the render backend, so they follow its
+  // teardown and the loss of the graphics context.
+  class ConsoleProgram final : public RenderExtension {
+  public:
+    void ensureInitialized() {
+      if (m_program.isValid()) {
+        return;
+      }
+      m_program.create(kVertexShader, kFragmentShader);
+      m_position = glGetAttribLocation(m_program.id(), "a_position");
+      m_surfaceSize = glGetUniformLocation(m_program.id(), "u_surface_size");
+      m_quadSize = glGetUniformLocation(m_program.id(), "u_quad_size");
+      m_transform = glGetUniformLocation(m_program.id(), "u_transform");
+      m_uv = glGetUniformLocation(m_program.id(), "u_uv");
+      m_opacity = glGetUniformLocation(m_program.id(), "u_opacity");
+      m_createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
+      m_destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
+      m_imageTarget =
+          reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    }
+
+    void destroy() override {
+      for (auto& [id, slot] : m_slots) {
+        free(slot);
+      }
+      m_slots.clear();
+      m_program.destroy();
+    }
+
+    void abandon() noexcept override {
+      m_slots.clear();
+      m_program.abandon();
+    }
+
+    Slot& slot(std::uint64_t id) {
+      std::vector<std::uint64_t> released;
+      {
+        std::lock_guard lock(g_releasedMutex);
+        released.swap(g_released);
+      }
+      for (const auto gone : released) {
+        if (const auto it = m_slots.find(gone); it != m_slots.end()) {
+          free(it->second);
+          m_slots.erase(it);
+        }
+      }
+      return m_slots[id];
+    }
+
+    // The guest's GPU buffer as a texture, with no copy. An empty string when it worked.
+    std::string import(Slot& slot, const coffret::Scanout& scanout) {
+      free(slot);
+      if (!m_createImage || !m_destroyImage || !m_imageTarget) {
+        return "this graphics driver cannot import GPU buffers";
+      }
+      static constexpr std::array<std::array<EGLint, 5>, 4> kPlaneAttributes{{
+          {EGL_DMA_BUF_PLANE0_FD_EXT, EGL_DMA_BUF_PLANE0_OFFSET_EXT, EGL_DMA_BUF_PLANE0_PITCH_EXT,
+           EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT},
+          {EGL_DMA_BUF_PLANE1_FD_EXT, EGL_DMA_BUF_PLANE1_OFFSET_EXT, EGL_DMA_BUF_PLANE1_PITCH_EXT,
+           EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT, EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT},
+          {EGL_DMA_BUF_PLANE2_FD_EXT, EGL_DMA_BUF_PLANE2_OFFSET_EXT, EGL_DMA_BUF_PLANE2_PITCH_EXT,
+           EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT, EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT},
+          {EGL_DMA_BUF_PLANE3_FD_EXT, EGL_DMA_BUF_PLANE3_OFFSET_EXT, EGL_DMA_BUF_PLANE3_PITCH_EXT,
+           EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT, EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT},
+      }};
+      // 0x00ffffffffffffff is DRM_FORMAT_MOD_INVALID: the buffer has no explicit modifier.
+      const bool modifier = scanout.modifier != 0x00ffffffffffffffULL;
+      std::vector<EGLint> attributes{
+          EGL_WIDTH, static_cast<EGLint>(scanout.backingWidth), EGL_HEIGHT, static_cast<EGLint>(scanout.backingHeight),
+          EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(scanout.fourcc),
+      };
+      for (std::size_t i = 0; i < scanout.planes.size() && i < kPlaneAttributes.size(); ++i) {
+        const auto& plane = scanout.planes[i];
+        const auto& names = kPlaneAttributes[i];
+        attributes.insert(attributes.end(), {names[0], plane.fd, names[1], static_cast<EGLint>(plane.offset), names[2],
+                                             static_cast<EGLint>(plane.stride)});
+        if (modifier) {
+          attributes.insert(attributes.end(), {names[3], static_cast<EGLint>(scanout.modifier & 0xffffffffU), names[4],
+                                               static_cast<EGLint>(scanout.modifier >> 32)});
+        }
+      }
+      attributes.push_back(EGL_NONE);
+      slot.image = m_createImage(eglGetCurrentDisplay(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attributes.data());
+      if (slot.image == EGL_NO_IMAGE_KHR) {
+        return std::format(
+            "the guest's GPU buffer could not be imported (EGL error {:#x}, format {:#x}, modifier {:#x}, {} planes)",
+            eglGetError(), scanout.fourcc, scanout.modifier, scanout.planes.size()
+        );
+      }
+      while (glGetError() != GL_NO_ERROR) {
+      }
+      glGenTextures(1, &slot.texture);
+      glBindTexture(GL_TEXTURE_2D, slot.texture);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      m_imageTarget(GL_TEXTURE_2D, slot.image);
+      if (const GLenum error = glGetError(); error != GL_NO_ERROR) {
+        free(slot);
+        return std::format("the guest's GPU buffer could not be used as a texture (GL error {:#x})", error);
+      }
+      slot.usable = true;
+      applyFilter(slot, true);
+      return {};
+    }
+
+    // The shared pixels as a texture: all of them for a new picture, else the rows that changed.
+    void upload(Slot& slot, const coffret::Scanout& scanout, const coffret::Rect& damage, bool fresh) {
+      GLint alignment = 4;
+      glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, static_cast<GLint>(scanout.stride / 4));
+      if (fresh || !slot.usable || slot.width != scanout.width || slot.height != scanout.height) {
+        free(slot);
+        glGenTextures(1, &slot.texture);
+        glBindTexture(GL_TEXTURE_2D, slot.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_BGRA_EXT, static_cast<GLsizei>(scanout.width), static_cast<GLsizei>(scanout.height), 0,
+            GL_BGRA_EXT, GL_UNSIGNED_BYTE, scanout.pixels
+        );
+        slot.width = scanout.width;
+        slot.height = scanout.height;
+        slot.usable = true;
+        applyFilter(slot, true);
+      } else if (!damage.empty()) {
+        glBindTexture(GL_TEXTURE_2D, slot.texture);
+        const auto* first = scanout.pixels + static_cast<std::size_t>(damage.y) * scanout.stride
+                          + static_cast<std::size_t>(damage.x) * 4;
+        glTexSubImage2D(GL_TEXTURE_2D, 0, damage.x, damage.y, damage.width, damage.height, GL_BGRA_EXT, GL_UNSIGNED_BYTE, first);
+      }
+      glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+    }
+
+    void drawSlot(
+        Slot& slot, const CustomDrawContext& context, const coffret::Placement& placement, const std::array<float, 4>& uv
+    ) {
+      if (!slot.usable || !m_program.isValid()) {
+        return;
+      }
+      glBindTexture(GL_TEXTURE_2D, slot.texture);
+      applyFilter(slot, !placement.exact);
+      static constexpr std::array<GLfloat, 12> kQuad{0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F, 1.0F, 1.0F};
+      const Mat3 transform = context.transform * Mat3::translation(placement.x, placement.y);
+      glUseProgram(m_program.id());
+      glActiveTexture(GL_TEXTURE0);
+      glUniform2f(m_surfaceSize, context.surfaceWidth, context.surfaceHeight);
+      glUniform2f(m_quadSize, placement.width, placement.height);
+      glUniformMatrix3fv(m_transform, 1, GL_FALSE, transform.m.data());
+      glUniform4f(m_uv, uv[0], uv[1], uv[2], uv[3]);
+      glUniform1f(m_opacity, context.opacity);
+      const auto position = static_cast<GLuint>(m_position);
+      glVertexAttribPointer(position, 2, GL_FLOAT, GL_FALSE, 0, kQuad.data());
+      glEnableVertexAttribArray(position);
+      glDrawArrays(GL_TRIANGLES, 0, 6);
+      glDisableVertexAttribArray(position);
+    }
+
+  private:
+    // For the texture that is bound.
+    void applyFilter(Slot& slot, bool linear) {
+      const GLint filter = linear ? GL_LINEAR : GL_NEAREST;
+      if (slot.filter == filter) {
+        return;
+      }
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+      slot.filter = filter;
+    }
+
+    void free(Slot& slot) {
+      if (slot.texture != 0) {
+        glDeleteTextures(1, &slot.texture);
+      }
+      if (slot.image != EGL_NO_IMAGE_KHR && m_destroyImage) {
+        m_destroyImage(eglGetCurrentDisplay(), slot.image);
+      }
+      slot = Slot{};
+    }
+
+    ShaderProgram m_program;
+    GLint m_position = -1, m_surfaceSize = -1, m_quadSize = -1, m_transform = -1, m_uv = -1, m_opacity = -1;
+    PFNEGLCREATEIMAGEKHRPROC m_createImage = nullptr;
+    PFNEGLDESTROYIMAGEKHRPROC m_destroyImage = nullptr;
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC m_imageTarget = nullptr;
+    std::unordered_map<std::uint64_t, Slot> m_slots;
+  };
+} // namespace
+
+coffret::ConsoleNode::ConsoleNode(std::shared_ptr<FrameStore> frames) : m_frames(std::move(frames)), m_id(g_nextId++) {}
+
+coffret::ConsoleNode::~ConsoleNode() {
+  std::lock_guard lock(g_releasedMutex);
+  g_released.push_back(m_id);
+}
+
+coffret::Placement coffret::ConsoleNode::placement(float scale) const {
+  const Scanout scanout = m_frames->peek();
+  return placeFrame(width(), height(), scale, scanout.width, scanout.height);
+}
+
+void coffret::ConsoleNode::draw(RenderBackend& backend, const CustomDrawContext& context) const {
+  auto& program = backend.extension<ConsoleProgram>();
+  program.ensureInitialized();
+  Slot& slot = program.slot(m_id);
+  const FrameStore::Snapshot snapshot = m_frames->take();
+  const Scanout& scanout = snapshot.scanout;
+  const bool fresh = scanout.serial != slot.serial;
+  std::array<float, 4> uv{0.0F, 0.0F, 1.0F, 1.0F};
+
+  if (scanout.kind == Scanout::Kind::None) {
+    if (fresh) {
+      slot.usable = false;
+      slot.serial = scanout.serial;
+      m_stats.path = "none";
+      m_stats.width = m_stats.height = 0;
+    }
+    return;
+  }
+  if (scanout.kind == Scanout::Kind::Dmabuf) {
+    if (fresh) {
+      slot.serial = scanout.serial;
+      const std::string problem = program.import(slot, scanout);
+      if (!problem.empty()) {
+        kLog.warn("{}", problem);
+      }
+      m_stats.path = problem.empty() ? "dmabuf" : "dmabuf failed: " + problem;
+    }
+    const float bw = static_cast<float>(std::max(1U, scanout.backingWidth)), bh = static_cast<float>(std::max(1U, scanout.backingHeight));
+    uv = {static_cast<float>(scanout.x) / bw, static_cast<float>(scanout.y) / bh,
+          static_cast<float>(scanout.x + scanout.width) / bw, static_cast<float>(scanout.y + scanout.height) / bh};
+    if (!scanout.y0Top) {
+      uv[1] = 1.0F - uv[1];
+      uv[3] = 1.0F - uv[3];
+    }
+  } else {
+    if (scanout.pixmanFormat != kPixmanX8R8G8B8 && scanout.pixmanFormat != kPixmanA8R8G8B8) {
+      if (fresh) {
+        slot.serial = scanout.serial;
+        slot.usable = false;
+        m_stats.path = std::format("pixel format {:#x} is not supported", scanout.pixmanFormat);
+        kLog.warn("{}", m_stats.path);
+      }
+      return;
+    }
+    program.upload(slot, scanout, snapshot.damage, fresh);
+    slot.serial = scanout.serial;
+    m_stats.path = "shared memory";
+  }
+  if (fresh || !snapshot.damage.empty()) {
+    ++m_stats.frames;
+  }
+  m_stats.width = scanout.width;
+  m_stats.height = scanout.height;
+  const float scale = std::max(context.pixelScaleX, 0.01F);
+  program.drawSlot(slot, context, placeFrame(context.width, context.height, scale, scanout.width, scanout.height), uv);
+}
