@@ -40,7 +40,7 @@ namespace coffret {
     wl_surface* surface() const { return m_surface.wlSurface(); }
 
     void pointer(const PointerEvent& event) { m_console.pointer(event); }
-    void key(std::uint32_t evdev, bool pressed) { m_console.key(evdev, pressed); }
+    void key(std::uint32_t evdev, bool pressed) { m_console.key(evdev, pressed, true); }
     void focusLost() { m_console.focusLost(); }
 
   private:

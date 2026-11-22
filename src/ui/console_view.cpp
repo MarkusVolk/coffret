@@ -219,7 +219,7 @@ std::string coffret::ConsoleView::describe() const {
   return std::format(
       "{}x{}   {}   {:.0f} fps   pointer: {}   {}", stats.width, stats.height, stats.path, m_fps,
       m_display->pointerAbsolute() ? "absolute" : "relative",
-      m_grabbed ? "Ctrl+Alt releases keyboard and mouse" : "click into the picture to control the guest"
+      m_grabbed ? "Ctrl+Alt releases keyboard and mouse" : "typing goes to the guest; a click into the picture hands it the mouse too"
   );
 }
 
@@ -305,7 +305,7 @@ void coffret::ConsoleView::typeKeys(const std::vector<std::uint32_t>& keys) {
   }
 }
 
-void coffret::ConsoleView::key(std::uint32_t evdev, bool pressed) {
+void coffret::ConsoleView::key(std::uint32_t evdev, bool pressed, bool toGuest) {
   const bool control = evdev == KEY_LEFTCTRL || evdev == KEY_RIGHTCTRL;
   const bool alt = evdev == KEY_LEFTALT || evdev == KEY_RIGHTALT;
   if (!pressed) {
@@ -317,7 +317,7 @@ void coffret::ConsoleView::key(std::uint32_t evdev, bool pressed) {
     m_chordArmed = false;
     return;
   }
-  if (!m_grabbed) {
+  if (!toGuest) {
     return;
   }
   sendKey(evdev, true);

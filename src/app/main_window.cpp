@@ -1690,22 +1690,32 @@ void coffret::MainWindow::hostCopied(const std::string& text) {
   }
 }
 
+bool coffret::MainWindow::keysToGuest() {
+  ConsoleView* console = shownConsole();
+  if (!console) {
+    return false;
+  }
+  const InputArea* focused = m_dispatcher.focusedArea();
+  return console->grabbed() || !(focused && focused->textInputClient());
+}
+
 void coffret::MainWindow::rawKey(std::uint32_t evdev, bool pressed) {
   if (ConsoleView* console = shownConsole()) {
+    const bool toGuest = keysToGuest();
     // F11 stays ours while the guest has the keyboard, else full screen has no way out.
-    if (evdev == KEY_F11 && console->grabbed()) {
+    if (evdev == KEY_F11 && toGuest) {
       if (pressed) {
         toggleFullscreen();
       }
       return;
     }
-    console->key(evdev, pressed);
+    console->key(evdev, pressed, toGuest);
   }
 }
 
 void coffret::MainWindow::keyboard(const KeyboardEvent& event) {
   // The guest has the keyboard: nothing here is ours.
-  if (ConsoleView* console = shownConsole(); console && console->grabbed()) {
+  if (keysToGuest()) {
     return;
   }
   if (event.pressed && !event.preedit) {
@@ -1797,6 +1807,10 @@ void coffret::MainWindow::pointer(const PointerEvent& event) {
   }
   if (console && !overBar) {
     console->pointer(event);
+    // A click into the picture takes the keyboard from a text field of the window too.
+    if (console->grabbed() && m_dispatcher.focusedArea()) {
+      m_dispatcher.setFocus(nullptr);
+    }
   }
   requestUpdate();
 }

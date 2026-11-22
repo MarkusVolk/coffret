@@ -22,8 +22,8 @@ namespace coffret {
   class WindowSurface;
 
   // One guest's screen with its keyboard and mouse: the picture as a node for any window, and what
-  // goes back to the guest. A click into the picture hands keyboard and mouse to the guest, Ctrl+Alt
-  // takes them back.
+  // goes back to the guest. Keys go to the guest as the window passes them; a click into the
+  // picture grabs keyboard and mouse, with the desktop's shortcuts, and Ctrl+Alt takes them back.
   class ConsoleView {
   public:
     struct Host {
@@ -61,8 +61,8 @@ namespace coffret {
     void sizeChanged();
     void requestSize(std::uint32_t width, std::uint32_t height);
 
-    // A key as the keyboard sent it (Linux key code).
-    void key(std::uint32_t evdev, bool pressed);
+    // A key as the keyboard sent it (Linux key code); a press goes to the guest when `toGuest`.
+    void key(std::uint32_t evdev, bool pressed, bool toGuest);
     // True when the event was the guest's.
     bool pointer(const PointerEvent& event);
     // The window lost the keyboard: the guest lets go of it too.

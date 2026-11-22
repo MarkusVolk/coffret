@@ -114,6 +114,8 @@ namespace coffret {
     void removeMachine(const std::string& uuid, bool deleteFiles);
     void applySettings(const VmConfig& config);
     void finishInstall(const std::string& uuid);
+    // The keyboard is the shown guest's: it has the keyboard grabbed, or no text field of the window has the focus.
+    bool keysToGuest();
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
     void cloneMachine(const std::string& name, bool linked);
