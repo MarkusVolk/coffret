@@ -569,6 +569,8 @@ void coffret::MachinePage::setSnapshots(std::vector<Snapshot> snapshots) {
 
 void coffret::MachinePage::setBusy(bool busy) { m_busy = busy; }
 
+void coffret::MachinePage::setGraphicsDriverLoaded(bool loaded) { m_graphicsDriverLoaded = loaded; }
+
 void coffret::MachinePage::fill() {
   // A machine with less than the stepper's smallest step keeps what it has until it is changed.
   m_memory->setValue(static_cast<int>(m_edit.memoryMiB));
@@ -708,11 +710,10 @@ void coffret::MachinePage::sync() {
   m_accel->setEnabled(!windows || direct3d || m_edit.accel3d);
   m_accelNote->setVisible(windows);
   m_venus->setEnabled(m_edit.accel3d && !windows);
-  m_installDriver->setVisible(windows && direct3d && m_machine.config.neptune);
+  m_installDriver->setVisible(windows && direct3d && m_machine.config.neptune && !m_graphicsDriverLoaded);
   m_installDriver->setEnabled(!m_busy && m_machine.state == MachineState::Running);
   m_accelNote->setText(
-      direct3d ? "Direct3D and Vulkan through the viogpu3d driver, which coffret installs with Windows; "
-                 "a machine set up before gets it while it runs, through the guest agent."
+      direct3d ? "Direct3D and Vulkan through the viogpu3d driver, which coffret installs with Windows."
                : "Windows draws in 2D: this computer has no viogpu3d driver or no QEMU with Direct3D for guests."
   );
   m_microphone->setEnabled(m_edit.sound);

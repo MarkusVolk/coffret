@@ -156,10 +156,13 @@ std::string coffret::windowsGraphicsDriverScript(std::string_view inf) {
   return std::format(
       "Get-WindowsDriver -Online | Where-Object OriginalFileName -like '*\\viogpudo.inf' | "
       "ForEach-Object {{ pnputil /delete-driver $_.Driver /uninstall /force }}; pnputil /add-driver {} /install | Out-Null; "
-      "Start-Sleep 3; if ((Get-CimInstance Win32_VideoController).Name -match '3D') {{ exit 0 }} "
-      "Write-Output 'Windows kept its old graphics driver.'; exit 1",
-      inf
+      "Start-Sleep 3; {} Write-Output 'Windows kept its old graphics driver.'; exit 1",
+      inf, windowsGraphicsDriverCheck()
   );
+}
+
+std::string coffret::windowsGraphicsDriverCheck() {
+  return "if ((Get-CimInstance Win32_VideoController).Name -match '3D') { exit 0 }";
 }
 
 std::string coffret::windowsAnswerFile(const WindowsAnswers& a) {

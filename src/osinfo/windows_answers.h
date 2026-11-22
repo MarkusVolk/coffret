@@ -35,6 +35,8 @@ namespace coffret {
   // graphics driver. The guest tools bring viogpudo with a higher version, which Windows would
   // keep for the same device: it goes first.
   std::string windowsGraphicsDriverScript(std::string_view inf);
+  // PowerShell that exits with 0 when Windows draws with viogpu3d.
+  std::string windowsGraphicsDriverCheck();
 
   // Windows' names for the host's settings: "0407:00000407" for "de", "en-US" for "en_US",
   // "W. Europe Standard Time" for "Europe/Berlin"; the US layout, en-US and UTC where none is known.

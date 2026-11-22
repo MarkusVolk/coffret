@@ -50,6 +50,8 @@ namespace coffret {
     void setConnectedUsb(std::vector<HostUsbDevice> devices);
     // An operation on the machine's snapshots is under way.
     void setBusy(bool busy);
+    // Whether the running Windows machine draws with viogpu3d already.
+    void setGraphicsDriverLoaded(bool loaded);
     // Brings the controls up to date; in the layout phase, before arranging.
     void sync();
 
@@ -67,6 +69,7 @@ namespace coffret {
     // The snapshot a row asks about, and what: "revert" or "delete".
     std::string m_askName, m_askWhat;
     bool m_busy = false;
+    bool m_graphicsDriverLoaded = false;
     bool m_factsStale = true;
     bool m_snapshotsStale = true;
 

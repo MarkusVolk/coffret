@@ -121,6 +121,7 @@ namespace coffret {
     void loadSnapshots();
     void snapshotDone(Hypervisor::Result result);
     void installGraphicsDriver();
+    void checkGraphicsDriver(const Machine& machine);
     void cloneMachine(const std::string& name, bool linked);
     void connectUsb(const HostUsbDevice& device, bool connect);
     void revokeUsb(const HostUsbDevice& device);
@@ -214,6 +215,10 @@ namespace coffret {
     std::string m_usbShownFor;
     // The machine whose snapshots the page has.
     std::string m_snapshotsOf;
+    // Running Windows machines with Direct3D: whether viogpu3d is loaded, as far as asked.
+    std::unordered_map<std::string, bool> m_graphicsDriverLoaded;
+    bool m_graphicsDriverAsking = false;
+    Timer m_graphicsDriverRetry;
     // applySettings() is running again with the firmware it had to look up first.
     bool m_firmwareChosen = false;
     bool m_listStale = true;

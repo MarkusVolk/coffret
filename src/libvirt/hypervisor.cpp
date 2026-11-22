@@ -557,8 +557,13 @@ namespace {
     return {};
   }
 
-  // Runs PowerShell in the guest and waits for it; its output when it fails.
-  std::expected<void, std::string> powershell(virDomainPtr domain, const std::string& script) {
+  struct Exited {
+    int code = 1;
+    std::string output;
+  };
+
+  // Runs PowerShell in the guest and waits for it.
+  std::expected<Exited, std::string> runPowershell(virDomainPtr domain, const std::string& script) {
     std::u16string wide;
     for (const unsigned char c : script) {
       wide.push_back(static_cast<char16_t>(c));
@@ -582,35 +587,61 @@ namespace {
         return std::unexpected(status.error());
       }
       if (status->value("exited", false)) {
-        if (status->value("exitcode", 1) == 0) {
-          return {};
-        }
-        std::string output;
+        Exited exited{.code = status->value("exitcode", 1), .output = {}};
         for (const char* key : {"out-data", "err-data"}) {
           if (status->contains(key)) {
             gsize size = 0;
             guchar* decoded = g_base64_decode((*status)[key].get<std::string>().c_str(), &size);
-            output.append(reinterpret_cast<const char*>(decoded), size);
+            exited.output.append(reinterpret_cast<const char*>(decoded), size);
             g_free(decoded);
           }
         }
-        // The last line says what went wrong; PowerShell's progress records only clutter it.
-        if (const auto clixml = output.find("#< CLIXML"); clixml != std::string::npos) {
-          output.erase(clixml);
-        }
-        while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
-          output.pop_back();
-        }
-        if (const auto line = output.find_last_of('\n'); line != std::string::npos) {
-          output.erase(0, line + 1);
-        }
-        return std::unexpected(output.empty() ? std::string("Windows reports an error.") : std::format("Windows: {}", output));
+        return exited;
       }
       usleep(500 * 1000);
     }
     return std::unexpected(std::string("Windows did not finish in five minutes."));
   }
+
+  // Runs PowerShell in the guest and waits for it; its output when it fails.
+  std::expected<void, std::string> powershell(virDomainPtr domain, const std::string& script) {
+    auto exited = runPowershell(domain, script);
+    if (!exited) {
+      return std::unexpected(exited.error());
+    }
+    if (exited->code == 0) {
+      return {};
+    }
+    std::string& output = exited->output;
+    // The last line says what went wrong; PowerShell's progress records only clutter it.
+    if (const auto clixml = output.find("#< CLIXML"); clixml != std::string::npos) {
+      output.erase(clixml);
+    }
+    while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
+      output.pop_back();
+    }
+    if (const auto line = output.find_last_of('\n'); line != std::string::npos) {
+      output.erase(0, line + 1);
+    }
+    return std::unexpected(output.empty() ? std::string("Windows reports an error.") : std::format("Windows: {}", output));
+  }
 } // namespace
+
+void coffret::Hypervisor::askWindows(
+    const std::string& uuid, const std::string& script, std::function<void(std::expected<bool, std::string>)> done
+) {
+  run<bool>(
+      uuid,
+      [script](virDomainPtr domain) -> std::expected<bool, std::string> {
+        const auto exited = runPowershell(domain, script);
+        if (!exited) {
+          return std::unexpected(exited.error());
+        }
+        return exited->code == 0;
+      },
+      std::move(done)
+  );
+}
 
 void coffret::Hypervisor::runInWindows(const std::string& uuid, const std::string& folder, const std::string& script, Done done) {
   run<void>(

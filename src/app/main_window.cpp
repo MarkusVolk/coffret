@@ -1648,6 +1648,7 @@ void coffret::MainWindow::syncPage() {
     if (m_snapshotsOf != machine->uuid) {
       loadSnapshots();
     }
+    checkGraphicsDriver(*machine);
     m_machinePage->sync();
   }
   show(m_consoles, console);
@@ -1881,12 +1882,45 @@ void coffret::MainWindow::installGraphicsDriver() {
   requestUpdate();
   m_services.hypervisor.runInWindows(
       machine->uuid, folder, windowsGraphicsDriverScript("(Join-Path $folder 'viogpu3d.inf')"),
-      [this, alive = std::weak_ptr<int>(m_alive), name = machine->name](Hypervisor::Result result) {
+      [this, alive = std::weak_ptr<int>(m_alive), uuid = machine->uuid, name = machine->name](Hypervisor::Result result) {
         if (alive.expired()) {
           return;
         }
         m_machinePage->setBusy(false);
+        if (result) {
+          m_graphicsDriverLoaded[uuid] = true;
+        }
         m_message = result ? std::format("{} draws with the 3D driver now.", name) : result.error();
+        requestUpdate();
+      }
+  );
+}
+
+void coffret::MainWindow::checkGraphicsDriver(const Machine& machine) {
+  std::erase_if(m_graphicsDriverLoaded, [this](const auto& entry) {
+    const Machine* known = m_services.hypervisor.find(entry.first);
+    return !known || known->state != MachineState::Running;
+  });
+  const bool wanted = machine.state == MachineState::Running && machine.config.kind == GuestKind::Windows && machine.config.neptune;
+  const auto loaded = m_graphicsDriverLoaded.find(machine.uuid);
+  m_machinePage->setGraphicsDriverLoaded(loaded != m_graphicsDriverLoaded.end() && loaded->second);
+  if (!wanted || loaded != m_graphicsDriverLoaded.end() || m_graphicsDriverAsking || m_graphicsDriverRetry.active()) {
+    return;
+  }
+  // The agent answers only once Windows is up: until then, asked again now and then.
+  m_graphicsDriverAsking = true;
+  m_services.hypervisor.askWindows(
+      machine.uuid, windowsGraphicsDriverCheck(),
+      [this, alive = std::weak_ptr<int>(m_alive), uuid = machine.uuid](std::expected<bool, std::string> result) {
+        if (alive.expired()) {
+          return;
+        }
+        m_graphicsDriverAsking = false;
+        if (result) {
+          m_graphicsDriverLoaded[uuid] = *result;
+        } else {
+          m_graphicsDriverRetry.start(std::chrono::seconds(15), [this] { requestUpdate(); });
+        }
         requestUpdate();
       }
   );
