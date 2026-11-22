@@ -70,6 +70,8 @@ namespace coffret {
     void grab();
     void release();
     bool grabbed() const noexcept { return m_grabbed; }
+    // The guest got the press of this key and not yet its release.
+    bool held(std::uint32_t evdev) const { return m_keysDown.contains(evdev); }
     // The guest's picture into a PPM file, at the next frame.
     void dumpTo(const std::string& path);
     // What the host has in its clipboard, for the guest to paste.

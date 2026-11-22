@@ -102,6 +102,8 @@ namespace coffret {
     ConsoleView* shownConsole();
     void run(const std::string& what, const std::string& uuid, void (Hypervisor::*call)(const std::string&, Hypervisor::Done));
     void toggleFullscreen();
+    // The window shows only the guest's picture, without its own controls.
+    void toggleBare();
     void importImage(ImageImport request);
     void showNew(const std::string& iso);
     void setInstallMedia(const std::string& iso);
@@ -144,6 +146,7 @@ namespace coffret {
     Button* m_resetButton = nullptr;
     Button* m_keysButton = nullptr;
     Button* m_fullscreenButton = nullptr;
+    Button* m_bareButton = nullptr;
     Flex* m_home = nullptr;
     Flex* m_homeList = nullptr;
     Label* m_homeEmpty = nullptr;
@@ -168,6 +171,7 @@ namespace coffret {
     std::string m_openWhenKnown;
     // The page for a new machine is up, instead of what the tab would show.
     bool m_barRevealed = false;
+    bool m_bare = false;
     bool m_pointerOverBar = false;
     bool m_newShown = false;
     bool m_creating = false;

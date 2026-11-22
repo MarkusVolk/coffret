@@ -95,7 +95,7 @@ A running Coffret takes named actions on `org.freedesktop.Application`; `coffret
 | `usb`, `usb-off` | `vendor:product` | gives a USB device to the shown machine or takes it back |
 | `clipboard` | text | as if the host had copied the text |
 | `search` | text | filters the library |
-| `fullscreen`, `grab`, `release` | | the console |
+| `fullscreen`, `bare`, `grab`, `release` | | the console; `bare` shows only the guest's picture in the window |
 | `key` | Linux key codes, `29+56+111` | pressed in this order, released in reverse |
 | `click` | `x,y` | a click at a place of the guest's screen |
 | `size` | `1280x800` | asks the guest for a resolution |

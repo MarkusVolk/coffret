@@ -928,6 +928,16 @@ void coffret::MainWindow::toggleFullscreen() {
   requestUpdate();
 }
 
+void coffret::MainWindow::toggleBare() {
+  // Full screen shows the picture alone already.
+  if (m_surface.fullscreen()) {
+    return;
+  }
+  m_bare = !m_bare;
+  m_barRevealed = false;
+  requestUpdate();
+}
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 
 std::string coffret::MainWindow::describe() const {
@@ -997,6 +1007,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     }
   } else if (name == "fullscreen") {
     toggleFullscreen();
+  } else if (name == "bare") {
+    toggleBare();
   } else if (name == "state") {
     std::print("{}", describe());
     std::fflush(stdout);
@@ -1269,6 +1281,7 @@ void coffret::MainWindow::build() {
           console->typeKeys({KEY_LEFTCTRL, KEY_LEFTALT, KEY_DELETE});
         }
       }),
+      tool(&m_bareButton, "arrows-maximize", "Only the guest's picture (Shift+F11)", [this] { toggleBare(); }),
       tool(&m_fullscreenButton, "maximize", "Full screen (F11)", [this] { toggleFullscreen(); }),
       ui::spacer(),
       tool(&m_detailsButton, "settings", "Settings and snapshots", [this] {
@@ -1595,6 +1608,8 @@ void coffret::MainWindow::syncPage() {
   Tab* tab = m_newShown ? nullptr : currentTab();
   const bool console = tab && machine && isActive(machine->state) && !tab->details;
   const bool fullscreen = m_surface.fullscreen() && console;
+  // In full screen and in the bare window the picture is all there is.
+  const bool bare = (fullscreen || m_bare) && console;
   for (auto& other : m_tabs) {
     const bool shown = console && other.get() == tab;
     show(other->picture, shown);
@@ -1624,15 +1639,15 @@ void coffret::MainWindow::syncPage() {
     m_machinePage->sync();
   }
   show(m_consoles, console);
-  show(m_sidebar, !fullscreen);
-  show(m_tabBar, !fullscreen);
-  if (!fullscreen) {
+  show(m_sidebar, !bare);
+  show(m_tabBar, !bare);
+  if (!bare) {
     m_barRevealed = false;
   }
-  show(m_toolbar, (!fullscreen || m_barRevealed) && machine);
-  m_toolbar->setParticipatesInLayout(!fullscreen);
-  m_toolbar->setZIndex(fullscreen ? 10 : 0);
-  show(m_statusBar, !fullscreen);
+  show(m_toolbar, (!bare || m_barRevealed) && machine);
+  m_toolbar->setParticipatesInLayout(!bare);
+  m_toolbar->setZIndex(bare ? 10 : 0);
+  show(m_statusBar, !bare);
 
   if (machine) {
     const MachineState state = machine->state;
@@ -1647,6 +1662,10 @@ void coffret::MainWindow::syncPage() {
     m_resetButton->setEnabled(active);
     m_keysButton->setEnabled(console);
     m_fullscreenButton->setEnabled(console);
+    m_bareButton->setEnabled(console);
+    show(m_bareButton, !fullscreen);
+    m_bareButton->setGlyph(m_bare ? "arrows-minimize" : "arrows-maximize");
+    m_bareButton->setTooltip(m_bare ? "Show the window's controls (Shift+F11)" : "Only the guest's picture (Shift+F11)");
     m_fullscreenButton->setGlyph(fullscreen ? "minimize" : "maximize");
     m_fullscreenButton->setTooltip(fullscreen ? "Leave full screen (F11)" : "Full screen (F11)");
     m_detailsButton->setEnabled(isActive(state));
@@ -1705,9 +1724,12 @@ bool coffret::MainWindow::keysToGuest() {
 void coffret::MainWindow::rawKey(std::uint32_t evdev, bool pressed) {
   if (ConsoleView* console = shownConsole()) {
     const bool toGuest = keysToGuest();
-    // F11 stays ours while the guest has the keyboard, else full screen has no way out.
+    // F11 stays ours while the guest has the keyboard, else full screen has no way out; with
+    // Shift it hides the window's controls.
     if (evdev == KEY_F11 && toGuest) {
-      if (pressed) {
+      if (pressed && (console->held(KEY_LEFTSHIFT) || console->held(KEY_RIGHTSHIFT))) {
+        toggleBare();
+      } else if (pressed) {
         toggleFullscreen();
       }
       return;
@@ -1725,6 +1747,10 @@ void coffret::MainWindow::keyboard(const KeyboardEvent& event) {
     const std::uint32_t sym = event.sym;
     if (event.modifiers == 0 && sym == XKB_KEY_F11) {
       toggleFullscreen();
+      return;
+    }
+    if (event.modifiers == KeyMod::Shift && sym == XKB_KEY_F11) {
+      toggleBare();
       return;
     }
     if (event.modifiers == KeyMod::Ctrl && (sym == XKB_KEY_f || sym == XKB_KEY_F)) {
@@ -1760,8 +1786,8 @@ void coffret::MainWindow::pointer(const PointerEvent& event) {
     return;
   }
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
-  // In full screen the toolbar comes down while the pointer touches the top edge.
-  if (console && m_surface.fullscreen() && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
+  // In full screen and in the bare window the toolbar comes down while the pointer touches the top edge.
+  if (console && (m_surface.fullscreen() || m_bare) && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
     const bool reveal = m_barRevealed ? y < kToolbarHeight + 8.0F : y < 2.0F;
     if (reveal != m_barRevealed) {
       m_barRevealed = reveal;
