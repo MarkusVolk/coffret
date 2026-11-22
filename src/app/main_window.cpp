@@ -14,6 +14,7 @@
 #include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/stepper.h"
+#include "ui/controls/toggle.h"
 #include "ui/machine_page.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -335,6 +336,7 @@ void coffret::MainWindow::importImage(ImageImport request) {
           return;
         }
         if (!config) {
+          m_creating = false;
           m_message = config.error();
           kLog.warn("import: {}", m_message);
           requestUpdate();
@@ -571,29 +573,51 @@ void coffret::MainWindow::setInstallMedia(const std::string& iso) {
   }
   m_newMediaPath = iso;
   m_newOsId.clear();
+  m_newSource = SourceKind::Unknown;
   m_newKind = GuestKind::Linux;
   if (m_newDetected) {
     m_newDetected->setText("Looking at the medium …");
   }
   std::weak_ptr<int> alive = m_alive;
-  runInThread<std::optional<InstallMedia>>(
-      [iso] { return detectInstallMedia(iso); },
-      [this, alive, iso](std::optional<InstallMedia> media) {
+  struct Looked {
+    SourceKind kind = SourceKind::Unknown;
+    std::optional<InstallMedia> media;
+  };
+  runInThread<Looked>(
+      [iso] {
+        Looked looked;
+        looked.kind = classifySource(iso);
+        if (looked.kind == SourceKind::InstallMedium) {
+          looked.media = detectInstallMedia(iso);
+        }
+        return looked;
+      },
+      [this, alive, iso](Looked looked) {
         if (alive.expired() || iso != m_newMediaPath || !m_newDetected) {
           return;
         }
+        m_newSource = looked.kind;
         std::string name = std::filesystem::path(iso).stem().string();
-        if (media) {
-          m_newOsId = media->id;
-          m_newKind = media->kind;
-          name = media->name;
-          m_newDetected->setText(std::format("This is {}.", media->name));
+        if (const auto dot = name.find('.'); dot != std::string::npos && dot > 0) {
+          // "gnome-image-intel-corei7-64.rootfs" is no better a name with its ending.
+          name.erase(dot);
+        }
+        if (looked.media) {
+          const InstallMedia& media = *looked.media;
+          m_newOsId = media.id;
+          m_newKind = media.kind;
+          name = media.name;
+          m_newDetected->setText(std::format("This is {}, to install from.", media.name));
           // At least what the system's makers recommend, and not less than a desktop is comfortable with.
-          m_newMemory->setValue(static_cast<int>(std::clamp(std::max(media->memoryMiB, 4096U) / 1024, 1U, std::max(1U, hostMemoryMiB() / 1024))));
-          m_newCpus->setValue(static_cast<int>(std::clamp(std::max(media->cpus, 2U), 1U, hostProcessors())));
-          m_newDisk->setValue(static_cast<int>(std::max<std::uint64_t>(media->diskBytes >> 30, 40)));
+          m_newMemory->setValue(static_cast<int>(std::clamp(std::max(media.memoryMiB, 4096U) / 1024, 1U, std::max(1U, hostMemoryMiB() / 1024))));
+          m_newCpus->setValue(static_cast<int>(std::clamp(std::max(media.cpus, 2U), 1U, hostProcessors())));
+          m_newDisk->setValue(static_cast<int>(std::max<std::uint64_t>(media.diskBytes >> 30, 40)));
+        } else if (looked.kind == SourceKind::InstallMedium) {
+          m_newDetected->setText("An installation medium whose system is not known; the settings are general ones.");
+        } else if (looked.kind == SourceKind::DiskImage) {
+          m_newDetected->setText("A disk with a system on it: the machine starts from it.");
         } else {
-          m_newDetected->setText("The system on this medium is not known; the settings are general ones.");
+          m_newDetected->setText("Neither an installation medium nor a disk image.");
         }
         if (!m_newNameTyped) {
           m_newName->setValue(name);
@@ -606,6 +630,22 @@ void coffret::MainWindow::setInstallMedia(const std::string& iso) {
 
 void coffret::MainWindow::createNew() {
   if (m_creating || !m_newName) {
+    return;
+  }
+  if (m_newSource == SourceKind::DiskImage) {
+    ImageImport request;
+    request.name = m_newName->value();
+    request.image = m_newIso->value();
+    request.copy = !m_newKeepInPlace;
+    request.memoryMiB = static_cast<unsigned>(m_newMemory->value()) * 1024;
+    request.cpus = static_cast<unsigned>(m_newCpus->value());
+    if (std::ranges::any_of(m_services.hypervisor.machines(), [&](const Machine& machine) { return machine.name == request.name; })) {
+      m_message = std::format("There is a machine named {} already.", request.name);
+      requestUpdate();
+      return;
+    }
+    m_creating = true;
+    importImage(std::move(request));
     return;
   }
   NewMachine request;
@@ -795,7 +835,8 @@ bool coffret::MainWindow::action(const std::string& name, const std::string& par
     applySettings(config);
   } else if (name == "new") {
     showNew(parameter);
-  } else if (name == "create") {
+  } else if (name == "create" || name == "create-in-place") {
+    m_newKeepInPlace = name == "create-in-place";
     createNew();
   } else if (name == "import") {
     // "<image>" or "<image>|<name>|<cdrom>": a machine from a disk image, as a copy.
@@ -1049,12 +1090,12 @@ void coffret::MainWindow::build() {
       .color = colorSpecFromRole(ColorRole::OnSurface),
   }));
   fresh->addChild(field(
-      "Installation medium",
+      "Medium or disk image",
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm, .flexGrow = 1.0F},
           ui::input({
               .out = &m_newIso,
-              .placeholder = "An ISO image",
+              .placeholder = "An ISO image to install from, or a disk image to start from",
               .flexGrow = 1.0F,
               .onChange = [this](const std::string& text) { setInstallMedia(text); },
           }),
@@ -1095,7 +1136,31 @@ void coffret::MainWindow::build() {
   ));
   fresh->addChild(field("Memory", ui::stepper({.out = &m_newMemory, .minValue = 1, .maxValue = static_cast<int>(std::max(1U, hostMemoryMiB() / 1024)), .value = 4, .valueSuffix = " GiB"})));
   fresh->addChild(field("Processors", ui::stepper({.out = &m_newCpus, .minValue = 1, .maxValue = static_cast<int>(hostProcessors()), .value = 2})));
-  fresh->addChild(field("Hard disk", ui::stepper({.out = &m_newDisk, .minValue = 8, .maxValue = 2048, .step = 8, .value = 40, .valueSuffix = " GiB"})));
+  {
+    auto row = field("New hard disk", ui::stepper({.out = &m_newDisk, .minValue = 8, .maxValue = 2048, .step = 8, .value = 40, .valueSuffix = " GiB"}));
+    m_newDiskRow = row.get();
+    fresh->addChild(std::move(row));
+  }
+  {
+    auto row = field(
+        "Keep the image in place",
+        ui::row(
+            {.align = FlexAlign::Center, .gap = Style::spaceMd, .flexGrow = 1.0F},
+            ui::toggle({.out = &m_newInPlace, .onChange = [this](bool on) {
+                          m_newKeepInPlace = on;
+                          requestUpdate();
+                        }}),
+            plainLabel({
+                .text = "Made at once: the machine keeps only its changes, and the image must stay where it is, unchanged. Otherwise the image is copied.",
+                .fontSize = Style::fontSizeCaption,
+                .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+                .flexGrow = 1.0F,
+            })
+        )
+    );
+    m_newInPlaceRow = row.get();
+    fresh->addChild(std::move(row));
+  }
   fresh->addChild(ui::row(
       {.align = FlexAlign::Center, .gap = Style::spaceSm},
       ui::button({.out = &m_newCreate, .text = "Create", .glyph = "plus", .variant = ButtonVariant::Primary, .onClick = [this] { createNew(); }}),
@@ -1221,7 +1286,9 @@ void coffret::MainWindow::syncPage() {
   }
   show(m_home, !machine && !m_newShown);
   show(m_newPage, m_newShown);
-  m_newCreate->setEnabled(!m_creating && !m_newName->value().empty() && !m_newMediaPath.empty());
+  m_newCreate->setEnabled(!m_creating && !m_newName->value().empty() && !m_newMediaPath.empty() && m_newSource != SourceKind::Unknown);
+  show(m_newDiskRow, m_newSource != SourceKind::DiskImage);
+  show(m_newInPlaceRow, m_newSource == SourceKind::DiskImage);
   m_newCreate->setText(m_creating ? "Creating …" : "Create");
   show(m_machinePage, machine && !console);
   if (machine && !console) {

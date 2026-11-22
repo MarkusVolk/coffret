@@ -43,8 +43,9 @@ namespace coffret {
   // A full copy as qcow2, whatever the source is.
   std::vector<std::string> convertImageCommand(const std::string& source, const std::string& target);
 
-  // How a raw disk image wants to be booted, read from its partition table: UEFI when it has an
-  // EFI system partition, BIOS when it has none. `start` is the image's first sectors, 17 KiB are
+  // How a raw disk image wants to be booted, read from its partition table. MBR: UEFI when it has
+  // an EFI system partition. GPT: UEFI unless the disk says BIOS by a BIOS boot partition or
+  // by boot code in its first sector. `start` is the image's first sectors, 17 KiB are
   // enough; nullopt when there is no partition table in it.
   std::optional<Firmware> firmwareOfDisk(std::span<const std::byte> start);
 

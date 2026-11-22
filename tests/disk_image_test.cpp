@@ -41,16 +41,25 @@ int main() {
   put(gpt, 512 + 72, 2, 8);
   put(gpt, 512 + 80, 128, 4);
   put(gpt, 512 + 84, 128, 4);
-  // A Linux filesystem partition only.
+  // A Linux filesystem partition only, as image builders that boot through UEFI make them.
   const unsigned char linuxData[16] = {0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47, 0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4};
   std::memcpy(gpt.data() + 1024, linuxData, 16);
-  CHECK(coffret::firmwareOfDisk(gpt) == Firmware::Bios);
-  const unsigned char efiSystem[16] = {0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b};
-  std::memcpy(gpt.data() + 1024 + 128, efiSystem, 16);
   CHECK(coffret::firmwareOfDisk(gpt) == Firmware::Uefi);
-  // A table that points beyond what was read is not followed.
-  put(gpt, 512 + 72, 1000000, 8);
-  CHECK(coffret::firmwareOfDisk(gpt) == Firmware::Bios);
+  // The mark for legacy boot does not make it a BIOS disk; boot code in the first sector does.
+  auto marked = gpt;
+  put(marked, 1024 + 48, 4, 8);
+  CHECK(coffret::firmwareOfDisk(marked) == Firmware::Uefi);
+  auto coded = gpt;
+  coded[0] = std::byte{0xeb};
+  CHECK(coffret::firmwareOfDisk(coded) == Firmware::Bios);
+  // A BIOS boot partition, for GRUB.
+  auto grub = gpt;
+  std::memcpy(grub.data() + 1024 + 128, "Hah!IdontNeedEFI", 16);
+  CHECK(coffret::firmwareOfDisk(grub) == Firmware::Bios);
+  // An EFI system partition decides it, whatever else there is.
+  const unsigned char efiSystem[16] = {0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b};
+  std::memcpy(coded.data() + 1024 + 128, efiSystem, 16);
+  CHECK(coffret::firmwareOfDisk(coded) == Firmware::Uefi);
 
   const auto info = coffret::parseImageInfo(R"({
     "virtual-size": 21474836480, "filename": "disk.qcow2", "format": "qcow2", "actual-size": 1638400,

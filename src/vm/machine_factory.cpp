@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <string_view>
 #include <unistd.h>
 #include <vector>
 
@@ -237,4 +238,30 @@ std::vector<std::string> coffret::machinesBuiltOn(const std::string& folder, con
     }
   }
   return names;
+}
+
+coffret::SourceKind coffret::classifySource(const std::string& path) {
+  // "CD001" at the start of the 17th sector of 2048 bytes; installers that also boot from a USB
+  // stick carry a partition table too and are media all the same.
+  {
+    std::ifstream file(path, std::ios::binary);
+    char magic[5] = {};
+    file.seekg(32769);
+    file.read(magic, sizeof(magic));
+    if (file.gcount() == static_cast<std::streamsize>(sizeof(magic)) && std::string_view(magic, sizeof(magic)) == "CD001") {
+      return SourceKind::InstallMedium;
+    }
+  }
+  const auto described = runCommand(imageInfoCommand(path)).and_then(parseImageInfo);
+  if (!described) {
+    return SourceKind::Unknown;
+  }
+  if (described->format != "raw") {
+    return SourceKind::DiskImage;
+  }
+  std::ifstream file(path, std::ios::binary);
+  std::vector<char> bytes(34 * 512);
+  file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  bytes.resize(static_cast<std::size_t>(file.gcount()));
+  return firmwareOfDisk(std::as_bytes(std::span(bytes))) ? SourceKind::DiskImage : SourceKind::Unknown;
 }

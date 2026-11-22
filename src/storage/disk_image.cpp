@@ -11,6 +11,10 @@ namespace {
   constexpr std::array<unsigned char, 16> kEfiSystem{0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11,
                                                      0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b};
 
+  // 21686148-6449-6E6F-744E-656564454649, "Hah!IdontNeedEFI".
+  constexpr std::array<unsigned char, 16> kBiosBoot{0x48, 0x61, 0x68, 0x21, 0x49, 0x64, 0x6f, 0x6e,
+                                                    0x74, 0x4e, 0x65, 0x65, 0x64, 0x45, 0x46, 0x49};
+
   unsigned char byteAt(std::span<const std::byte> data, std::size_t offset) {
     return offset < data.size() ? static_cast<unsigned char>(data[offset]) : 0;
   }
@@ -91,6 +95,11 @@ std::optional<coffret::Firmware> coffret::firmwareOfDisk(std::span<const std::by
   if (size < 16) {
     return std::nullopt;
   }
+  // A table without an EFI system partition still means UEFI more often than not: image builders
+  // give the boot partition any type. It is a BIOS disk when something on it says so: a BIOS boot
+  // partition for GRUB, or boot code in the first sector. The mark for legacy boot says nothing:
+  // wic sets it on the boot partition of UEFI images too.
+  bool legacy = std::any_of(start.begin(), start.begin() + 440, [](std::byte value) { return value != std::byte{0}; });
   for (std::uint64_t index = 0; index < count; ++index) {
     const std::uint64_t offset = first + index * size;
     if (offset + 16 > start.size()) {
@@ -99,8 +108,9 @@ std::optional<coffret::Firmware> coffret::firmwareOfDisk(std::span<const std::by
     if (std::memcmp(start.data() + offset, kEfiSystem.data(), kEfiSystem.size()) == 0) {
       return Firmware::Uefi;
     }
+    legacy = legacy || std::memcmp(start.data() + offset, kBiosBoot.data(), kBiosBoot.size()) == 0;
   }
-  return Firmware::Bios;
+  return legacy ? Firmware::Bios : Firmware::Uefi;
 }
 
 std::string coffret::safeName(const std::string& name) {

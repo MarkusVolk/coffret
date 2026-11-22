@@ -36,6 +36,17 @@ namespace coffret {
     std::uint64_t diskBytes = 40ULL << 30;
   };
 
+  // What a file is that a machine could be made from.
+  enum class SourceKind : std::uint8_t {
+    // An ISO 9660 image: something to install from, into a new disk.
+    InstallMedium,
+    // A disk with a system on it: a cloud image, a Yocto .wic, a disk of another hypervisor.
+    DiskImage,
+    Unknown,
+  };
+  // Looks into the file; runs qemu-img: for worker threads.
+  SourceKind classifySource(const std::string& path);
+
   // Where a machine's own files live: <data>/coffret/machines/<name>.
   std::string machineFolder(const std::string& name);
 

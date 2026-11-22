@@ -18,6 +18,7 @@ class Flex;
 class Input;
 class Label;
 class Stepper;
+class Toggle;
 class RenderContext;
 class TextInputService;
 class WaylandConnection;
@@ -161,6 +162,12 @@ namespace coffret {
     std::string m_newMediaPath;
     GuestKind m_newKind = GuestKind::Linux;
     std::string m_newOsId;
+    // What the file is: something to install from, or a disk that has a system on it.
+    SourceKind m_newSource = SourceKind::Unknown;
+    Toggle* m_newInPlace = nullptr;
+    Flex* m_newInPlaceRow = nullptr;
+    Flex* m_newDiskRow = nullptr;
+    bool m_newKeepInPlace = false;
     // The name was typed by the user and is not replaced by the medium's.
     bool m_newNameTyped = false;
     // Actions that arrived before the machines were known.
