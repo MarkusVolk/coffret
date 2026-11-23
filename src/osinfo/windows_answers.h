@@ -28,7 +28,8 @@ namespace coffret {
   };
 
   // An autounattend.xml for Windows 10 and 11 on amd64 with UEFI: the first disk wiped and
-  // partitioned, a local account in the Administrators group, no online account pages.
+  // partitioned, a local account in the Administrators group, no online account pages. The account
+  // is logged on at every start: the helper that takes up the window's size runs in its session only.
   std::string windowsAnswerFile(const WindowsAnswers& answers);
 
   // PowerShell that installs viogpu3d from `inf` (a PowerShell expression for its path) as the

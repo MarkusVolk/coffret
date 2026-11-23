@@ -53,6 +53,8 @@ int main() {
   CHECK(xml.find("W. Europe Standard Time") != std::string::npos);
   CHECK(xml.find("W269N-WFGWX-YVC9B-4J6C9-4T9TF") != std::string::npos);
   CHECK(xml.find("FirstLogonCommands") == std::string::npos);
+  CHECK(xml.find("<AutoLogon>") != std::string::npos);
+  CHECK(xml.find("LogonCount") == std::string::npos);
   answers.guestTools = true;
   const std::string withTools = coffret::windowsAnswerFile(answers);
   pugi::xml_document tools;

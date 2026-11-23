@@ -243,7 +243,6 @@ std::string coffret::windowsAnswerFile(const WindowsAnswers& a) {
       <AutoLogon>
         <Username>{7}</Username>
         <Enabled>true</Enabled>
-        <LogonCount>1</LogonCount>
         <Password><Value>{9}</Value><PlainText>true</PlainText></Password>
       </AutoLogon>
 {10}      <TimeZone>{6}</TimeZone>

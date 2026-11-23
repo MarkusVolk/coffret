@@ -23,9 +23,10 @@ Things to know:
   computer, a user and a password. coffret boots the installer's kernel with libosinfo's answers
   in its initrd and boots the disk once the installer is done; this works for media whose answers
   go into the initrd, such as Debian's. For Windows 10 and 11 coffret writes an autounattend.xml
-  onto a disc of its own: a local account, no online account pages, and Microsoft's generic key
-  for the Pro edition (its KMS client key on volume licensing media), which installs but does not
-  activate. It presses Enter at the first start, as a Windows medium boots only after a key.
+  onto a disc of its own: a local account that Windows logs on at every start, no online account
+  pages, and Microsoft's generic key for the Pro edition (its KMS client key on volume licensing
+  media), which installs but does not activate. It presses Enter at the first start, as a Windows
+  medium boots only after a key.
 - A Windows machine gets a SATA disk and an Intel e1000e card, which Windows drives without
   extra drivers, a TPM, the firmware that can do secure boot, and no 3D acceleration. With
   `virtio-win-guest-tools.exe` in `<datadir>/virtio-win`, an unattended installation runs it at
