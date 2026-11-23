@@ -6,6 +6,7 @@
 #include "core/log.h"
 #include "core/ui_phase.h"
 #include "display/console_node.h"
+#include "fs/xdg_dirs.h"
 #include "input/input_grab.h"
 #include "osinfo/install_media.h"
 #include "platform/file_portal.h"
@@ -44,6 +45,26 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 namespace {
+  // The screen size a machine had last, one small file each.
+  std::filesystem::path keptSizePath(const std::string& uuid) {
+    return coffret::stateHome() / "coffret" / "sizes" / uuid;
+  }
+
+  std::optional<std::pair<std::uint32_t, std::uint32_t>> keptSize(const std::string& uuid) {
+    std::uint32_t width = 0, height = 0;
+    std::ifstream file(keptSizePath(uuid));
+    if (!(file >> width >> height) || width == 0 || height == 0) {
+      return std::nullopt;
+    }
+    return std::pair(width, height);
+  }
+
+  void keepSize(const std::string& uuid, std::uint32_t width, std::uint32_t height) {
+    std::error_code error;
+    std::filesystem::create_directories(keptSizePath(uuid).parent_path(), error);
+    std::ofstream(keptSizePath(uuid)) << width << ' ' << height << '\n';
+  }
+
   const Logger kLog("window");
 
   // What a domain is told about this session.
@@ -302,12 +323,16 @@ void coffret::MainWindow::openTab(const std::string& uuid) {
                     m_services.setClipboard(std::move(text));
                   }
                 },
+            .sizeKept = [uuid](std::uint32_t width, std::uint32_t height) { keepSize(uuid, width, height); },
         }
     );
     tab->console->hostCopied(m_hostClipboard);
     tab->console->setActive(false);
     if (const Machine* machine = m_services.hypervisor.find(uuid)) {
       tab->console->setFollowsWithoutPointer(machine->config.kind == GuestKind::Windows && machine->config.neptune);
+      if (const auto size = keptSize(uuid)) {
+        tab->console->setKeptSize(size->first, size->second);
+      }
     }
     m_tabs.push_back(std::move(tab));
   }

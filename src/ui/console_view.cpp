@@ -19,6 +19,10 @@ namespace {
   constexpr auto kRepeatInterval = std::chrono::seconds(5);
   // A guest that showed the size this long means to keep it.
   constexpr auto kSizeSettles = std::chrono::seconds(30);
+  // Long enough to be no passing state.
+  constexpr auto kSizeHeld = std::chrono::seconds(3);
+  // A guest that has not come back to its size by then is asked for the window's.
+  constexpr auto kStartTakes = std::chrono::seconds(45);
   const Logger kLog("console");
 
   std::uint32_t qnumOf(std::uint32_t evdev) { return evdev < coffret_linux_to_qnum_len ? coffret_linux_to_qnum[evdev] : 0; }
@@ -99,6 +103,8 @@ void coffret::ConsoleView::attach(int busFd) {
                 m_ready = true;
                 m_askedWidth = m_askedHeight = 0;
                 m_tookSize = false;
+                m_starting = true;
+                m_startedAt = std::chrono::steady_clock::now();
                 requestGuestSize();
                 if (!m_hostText.empty()) {
                   m_display->offerClipboard(m_hostText);
@@ -202,12 +208,22 @@ void coffret::ConsoleView::requestGuestSize() {
     return;
   }
   const float scale = m_host.surface.effectiveBufferScale();
-  const auto width = static_cast<std::uint32_t>(std::lround(m_node->width() * scale));
-  const auto height = static_cast<std::uint32_t>(std::lround(m_node->height() * scale));
+  auto width = static_cast<std::uint32_t>(std::lround(m_node->width() * scale));
+  auto height = static_cast<std::uint32_t>(std::lround(m_node->height() * scale));
+  if (starting()) {
+    width = m_keptWidth;
+    height = m_keptHeight;
+  }
   if (width < 320 || height < 200 || (width == m_askedWidth && height == m_askedHeight)) {
     return;
   }
+  // Another size is not taken up yet, whatever was before.
+  m_tookSize = false;
   requestSize(width, height);
+}
+
+bool coffret::ConsoleView::starting() const {
+  return m_followsWithoutPointer && m_starting && m_keptWidth != 0;
 }
 
 // Windows changes its resolution with a helper that starts with the user's session; what is asked
@@ -217,13 +233,28 @@ void coffret::ConsoleView::repeatRequest() {
     return;
   }
   const auto now = std::chrono::steady_clock::now();
-  if (m_shownWidth == m_askedWidth && m_shownHeight == m_askedHeight) {
+  const bool held = now - m_shownSince > kSizeHeld;
+  if (m_starting) {
+    const bool restored = held && m_shownWidth == m_keptWidth && m_shownHeight == m_keptHeight;
+    m_starting = m_keptWidth != 0 && !restored && now - m_startedAt < kStartTakes;
+    return;
+  }
+  const bool asAsked = m_shownWidth == m_askedWidth && m_shownHeight == m_askedHeight;
+  const bool fallback = m_shownWidth == 640 && m_shownHeight == 480;
+  // What Windows shows now is what it saved and comes back with.
+  if (held && !fallback && (asAsked || m_tookSize) && (m_shownWidth != m_keptWidth || m_shownHeight != m_keptHeight)) {
+    m_keptWidth = m_shownWidth;
+    m_keptHeight = m_shownHeight;
+    if (m_host.sizeKept) {
+      m_host.sizeKept(m_keptWidth, m_keptHeight);
+    }
+  }
+  if (asAsked) {
     // At boot the size is there for moments before Windows falls back.
     m_tookSize = m_tookSize || now - m_shownSince > kSizeSettles;
     return;
   }
-  // What Windows falls back to; nobody picks it.
-  const bool fallback = m_shownWidth == 640 && m_shownHeight == 480;
+  // Windows falls back to 640x480; nobody picks it.
   if ((m_tookSize && !fallback) || now - m_lastRequest < kRepeatInterval) {
     return;
   }
@@ -243,6 +274,8 @@ void coffret::ConsoleView::guestShows(std::uint32_t width, std::uint32_t height)
     // And whatever comes next has to be told the size anew.
     m_askedWidth = m_askedHeight = 0;
     m_tookSize = false;
+    m_starting = true;
+    m_startedAt = std::chrono::steady_clock::now();
   }
 }
 

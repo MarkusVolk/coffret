@@ -36,6 +36,8 @@ namespace coffret {
       std::function<void(bool hidden, std::uint32_t serial)> hostCursor = {};
       // The guest copied a text: it becomes the host's clipboard.
       std::function<void(std::string)> guestCopied = {};
+      // The guest keeps a size of its own accord or by request; to be set again as the kept size.
+      std::function<void(std::uint32_t width, std::uint32_t height)> sizeKept = {};
     };
 
     explicit ConsoleView(Host host);
@@ -60,6 +62,12 @@ namespace coffret {
     // The guest follows the window without having defined a pointer: Windows with viogpu3d draws
     // its pointer itself and is never a text console that would turn its picture off.
     void setFollowsWithoutPointer(bool follows) { m_followsWithoutPointer = follows; }
+    // The size the guest had last, asked for again when it starts: Windows comes back with the
+    // size it saved, and with a very small one when the driver does not offer that.
+    void setKeptSize(std::uint32_t width, std::uint32_t height) {
+      m_keptWidth = width;
+      m_keptHeight = height;
+    }
     // The node's size changed: the guest follows, once it has settled.
     void sizeChanged();
     void requestSize(std::uint32_t width, std::uint32_t height);
@@ -90,8 +98,9 @@ namespace coffret {
   private:
     void requestGuestSize();
     void guestShows(std::uint32_t width, std::uint32_t height);
-    // Asks again for a size the guest has not taken up since it started.
+    // Asks again for a size the guest has not taken up since it started, and notes the one it keeps.
     void repeatRequest();
+    bool starting() const;
     void sendKey(std::uint32_t evdev, bool pressed);
 
     Host m_host;
@@ -109,6 +118,10 @@ namespace coffret {
     // The guest kept the size asked for since it started; from then on its own choices stand.
     bool m_tookSize = false;
     std::chrono::steady_clock::time_point m_shownSince;
+    std::uint32_t m_keptWidth = 0, m_keptHeight = 0;
+    // The guest is still starting: it is asked for the size it kept, not for the window's.
+    bool m_starting = true;
+    std::chrono::steady_clock::time_point m_startedAt = std::chrono::steady_clock::now();
     bool m_nudged = false;
     std::chrono::steady_clock::time_point m_lastRequest;
     // The guest's pointer as it was when the console was attached or its picture last started
