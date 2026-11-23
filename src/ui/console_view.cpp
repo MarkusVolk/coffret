@@ -191,6 +191,7 @@ void coffret::ConsoleView::requestSize(std::uint32_t width, std::uint32_t height
   m_askedWidth = width;
   m_askedHeight = height;
   m_lastRequest = std::chrono::steady_clock::now();
+  kLog.debug("asking the guest for {}x{}", width, height);
   // 96 dpi; the guest scales its interface by its own settings. QEMU drops a request that equals the
   // last one, so a repeated one is a millimetre wider.
   m_display->requestSize(
@@ -265,6 +266,7 @@ void coffret::ConsoleView::repeatRequest() {
 void coffret::ConsoleView::guestShows(std::uint32_t width, std::uint32_t height) {
   if (width != m_shownWidth || height != m_shownHeight) {
     m_shownSince = std::chrono::steady_clock::now();
+    kLog.debug("the guest shows {}x{}", width, height);
   }
   m_shownWidth = width;
   m_shownHeight = height;
