@@ -90,6 +90,8 @@ namespace coffret {
   private:
     void requestGuestSize();
     void guestShows(std::uint32_t width, std::uint32_t height);
+    // Asks again for a size the guest has not taken up since it started.
+    void repeatRequest();
     void sendKey(std::uint32_t evdev, bool pressed);
 
     Host m_host;
@@ -103,6 +105,12 @@ namespace coffret {
     bool m_active = true;
     // The size last asked of the guest, in guest pixels.
     std::uint32_t m_askedWidth = 0, m_askedHeight = 0;
+    std::uint32_t m_shownWidth = 0, m_shownHeight = 0;
+    // The guest kept the size asked for since it started; from then on its own choices stand.
+    bool m_tookSize = false;
+    std::chrono::steady_clock::time_point m_shownSince;
+    bool m_nudged = false;
+    std::chrono::steady_clock::time_point m_lastRequest;
     // The guest's pointer as it was when the console was attached or its picture last started
     // over. A text console has no pointer and cannot change its size: it turns its picture off
     // when asked. Only a guest that defined a pointer since, a desktop, follows the window.

@@ -15,6 +15,10 @@
 #include <optional>
 
 namespace {
+  // Between two requests for a size the guest has not taken up.
+  constexpr auto kRepeatInterval = std::chrono::seconds(5);
+  // A guest that showed the size this long means to keep it.
+  constexpr auto kSizeSettles = std::chrono::seconds(30);
   const Logger kLog("console");
 
   std::uint32_t qnumOf(std::uint32_t evdev) { return evdev < coffret_linux_to_qnum_len ? coffret_linux_to_qnum[evdev] : 0; }
@@ -65,6 +69,7 @@ coffret::ConsoleView::ConsoleView(Host host) : m_host(std::move(host)), m_frames
     m_lastStatus = now;
     if (m_active && m_display) {
       requestGuestSize();
+      repeatRequest();
       m_host.changed();
     }
   });
@@ -93,6 +98,7 @@ void coffret::ConsoleView::attach(int busFd) {
               [this] {
                 m_ready = true;
                 m_askedWidth = m_askedHeight = 0;
+                m_tookSize = false;
                 requestGuestSize();
                 if (!m_hostText.empty()) {
                   m_display->offerClipboard(m_hostText);
@@ -178,9 +184,12 @@ void coffret::ConsoleView::requestSize(std::uint32_t width, std::uint32_t height
   }
   m_askedWidth = width;
   m_askedHeight = height;
-  // 96 dpi; the guest scales its interface by its own settings.
+  m_lastRequest = std::chrono::steady_clock::now();
+  // 96 dpi; the guest scales its interface by its own settings. QEMU drops a request that equals the
+  // last one, so a repeated one is a millimetre wider.
   m_display->requestSize(
-      width, height, static_cast<std::uint16_t>(width * 254 / 960), static_cast<std::uint16_t>(height * 254 / 960)
+      width, height, static_cast<std::uint16_t>(width * 254 / 960 + (m_nudged ? 1 : 0)),
+      static_cast<std::uint16_t>(height * 254 / 960)
   );
 }
 
@@ -201,12 +210,39 @@ void coffret::ConsoleView::requestGuestSize() {
   requestSize(width, height);
 }
 
+// Windows changes its resolution with a helper that starts with the user's session; what is asked
+// before that, at the boot of a guest, is lost.
+void coffret::ConsoleView::repeatRequest() {
+  if (!m_followsWithoutPointer || !m_display || !m_ready || !m_active || m_askedWidth == 0 || m_shownWidth == 0) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (m_shownWidth == m_askedWidth && m_shownHeight == m_askedHeight) {
+    // At boot the size is there for moments before Windows falls back.
+    m_tookSize = m_tookSize || now - m_shownSince > kSizeSettles;
+    return;
+  }
+  // What Windows falls back to; nobody picks it.
+  const bool fallback = m_shownWidth == 640 && m_shownHeight == 480;
+  if ((m_tookSize && !fallback) || now - m_lastRequest < kRepeatInterval) {
+    return;
+  }
+  m_nudged = !m_nudged;
+  requestSize(m_askedWidth, m_askedHeight);
+}
+
 void coffret::ConsoleView::guestShows(std::uint32_t width, std::uint32_t height) {
+  if (width != m_shownWidth || height != m_shownHeight) {
+    m_shownSince = std::chrono::steady_clock::now();
+  }
+  m_shownWidth = width;
+  m_shownHeight = height;
   if (width == 0 || height == 0) {
     // The guest starts over, a reboot perhaps: what comes next may be a text console again.
     m_cursorBefore = m_frames->cursor().serial;
     // And whatever comes next has to be told the size anew.
     m_askedWidth = m_askedHeight = 0;
+    m_tookSize = false;
   }
 }
 
